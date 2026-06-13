@@ -16,7 +16,24 @@ __all__ = [
     "get_socket_name",
     "ip_to_int",
     "htonl",
+    "is_port_open",
 ]
+
+def is_port_open(port):
+    sockaddr_in = SOCKADDR_IN_STRUCT.create()
+    sockaddr_in.sin_family = AF_INET
+    sockaddr_in.sin_port = struct.unpack(">H", struct.pack("<H", port))[0]
+    sockaddr_in.sin_addr = htonl(ip_to_int("127.0.0.1"))
+
+    try:
+        s = create_tcp_socket()
+    except Exception:
+        return False
+
+    connect = u64_to_i64(sc.syscalls.connect(s, sockaddr_in, 16))
+    close_ret = u64_to_i64(sc.syscalls.close(s))
+    
+    return connect == 0
 
 AF_INET = 2
 SOCK_STREAM = 1

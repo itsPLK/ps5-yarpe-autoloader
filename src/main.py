@@ -107,11 +107,11 @@ def poc():
                             % exec_path
                         )
                         if sc.platform == "ps5":
+                            log("[*] Sending payload to elfldr on port 9021...")
                             sock = create_tcp_client("127.0.0.1", 9021)
                             write_to_socket(sock, exec_data)
                             close_socket(sock)
-                            log("[*] Killing game to allow elfldr to take over...")
-                            sc.kill_game()
+                            log("[*] Payload sent to elfldr successfully.")
                         else:
                             BinLoader = SHARED_VARS.get("BinLoader", None)
                             if BinLoader is None:
@@ -132,7 +132,9 @@ def poc():
         except:
             exc_msg = traceback.format_exc()
             log_exc(exc_msg)
-        log("[*] Autoload finished. Continuing to socket listener...")
+        log("[*] Autoload finished. Suspending main thread...")
+        while True:
+            time.sleep(86400)
     else:
         log("[*] No autoload file found or autoload cancelled.")
 

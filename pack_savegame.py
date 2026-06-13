@@ -27,10 +27,64 @@ except Exception as exc:
 """
 
 
+import sys
+import types
+import zlib
+
 class Yummy(object):
     def __reduce__(self):
         return renpy.python.py_exec, (SCRIPT,)
 
+PERSISTENT_SCRIPT = """
+import os
+import sys
+import traceback
+
+sys.path.insert(0, "/saves/yarpe")
+
+class YarpeState(object):
+    def __init__(self):
+        self.logs = []
+        self.game_initialized = False
+
+renpy.store.yarpe_state = YarpeState()
+ys = renpy.store.yarpe_state
+
+def ylog(msg):
+    ys.logs.append(msg)
+    if len(ys.logs) > 400:
+        del ys.logs[0:100]
+
+ylog("YARPE: Initialized from persistent bootstrap.")
+
+def yarpe_label_callback(label, abnormal):
+    ylog("LABEL: %s (abnormal=%r)" % (label, abnormal))
+
+    if label == "splashscreen" and not ys.game_initialized:
+        ys.game_initialized = True
+        ylog("YARPE: Entered _call__enter_game_menu_0 -> autoloading slot '1-1'.")
+
+        try:
+            renpy.load("1-1")
+        except Exception as e:
+            ylog("YARPE ERROR: renpy.load('1-1') failed: %r" % e)
+
+renpy.config.label_callback = yarpe_label_callback
+ylog("YARPE: label_callback replaced with yarpe_label_callback.")
+"""
+
+class YummyPersistent(object):
+    def __reduce__(self):
+        return renpy.python.py_exec, (PERSISTENT_SCRIPT,)
+
+class DummyPersistent(object):
+    pass
+DummyPersistent.__module__ = "renpy.persistent"
+DummyPersistent.__name__ = "Persistent"
+DummyPersistent.__qualname__ = "Persistent"
+
+sys.modules["renpy.persistent"] = types.ModuleType("renpy.persistent")
+sys.modules["renpy.persistent"].Persistent = DummyPersistent
 
 def list_files(start_path):
     all_files = []
@@ -107,10 +161,17 @@ def main():
     output_path = "-saveindex"
     create_saveindex(src_files + autoload_files, output_path)
 
+    p = DummyPersistent()
+    p.yarpe_trigger = YummyPersistent()
+    pickled_persistent = pickle.dumps(p, protocol=2)
+    compressed_persistent = zlib.compress(pickled_persistent)
+    with open("persistent", "wb") as f:
+        f.write(compressed_persistent)
+
     with zipfile.ZipFile("save.zip", "w") as zipf:
         zipf.write(output_path, "-saveindex")
         zipf.write("1-1-LT1.save", "1-1-LT1.save")
-        # zipf.write("persistent", "persistent")
+        zipf.write("persistent", "persistent")
         for filepath, _ in src_files:
             if filepath in ["/saves/1-1-LT1.save", "/saves/persistent"]:
                 continue
