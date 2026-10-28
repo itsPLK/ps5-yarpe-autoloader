@@ -124,6 +124,7 @@ Thanks https://github.com/shahrilnet/remote_lua_loader/blob/main/SETUP.md for th
 3. "Pickle" the save data using `pack_savegame.py`(and `pack_unzipper.py` if needed).
 4. Copy the generated save file to your console using the above method.
 - Use `payloads/force_persistent.py` to load the save file automatically on game start.
+- `pack_savegame.py` writes a `persistent` trigger that re-arms itself, so the autostart survives closing and reopening the game.
 - To ignore the auto loader and go straight to socket listening part, hold triangle button while loading the save.
 
 

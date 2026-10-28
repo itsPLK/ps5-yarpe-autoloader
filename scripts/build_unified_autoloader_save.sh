@@ -42,6 +42,16 @@ echo "Setting up payload dependencies in $AUTOLOAD_DIR..."
 cp payloads/lapse.py "$AUTOLOAD_DIR/lapse.py" 2>/dev/null || echo "Warning: lapse.py not found in payloads/"
 cp payloads/elf_loader.py "$AUTOLOAD_DIR/elf_loader.py" 2>/dev/null || echo "Warning: elf_loader.py not found in payloads/"
 
+cp payloads/kexp_dispatch.py "$AUTOLOAD_DIR/kexp_dispatch.py" 2>/dev/null || true
+cp payloads/kexp.py "$AUTOLOAD_DIR/kexp.py" 2>/dev/null || true
+cp payloads/relapse.py "$AUTOLOAD_DIR/relapse.py" 2>/dev/null || true
+cp payloads/relapse_offsets.py "$AUTOLOAD_DIR/relapse_offsets.py" 2>/dev/null || true
+
+if [ ! -f "$AUTOLOAD_DIR/kexp.bin" ] || [ ! -f "$AUTOLOAD_DIR/elfldr-ps5.elf" ]; then
+    echo "Error: kexp.bin / elfldr-ps5.elf missing from $AUTOLOAD_DIR (needed for relapse)." >&2
+    exit 1
+fi
+
 echo "Generating autoload.txt..."
 cat <<EOF > "$AUTOLOAD_DIR/autoload.txt"
 kexp_dispatch.py

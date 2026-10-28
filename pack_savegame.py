@@ -40,37 +40,15 @@ import os
 import sys
 import traceback
 
-sys.path.insert(0, "/saves/yarpe")
-
-class YarpeState(object):
-    def __init__(self):
-        self.logs = []
-        self.game_initialized = False
-
-renpy.store.yarpe_state = YarpeState()
-ys = renpy.store.yarpe_state
-
-def ylog(msg):
-    ys.logs.append(msg)
-    if len(ys.logs) > 400:
-        del ys.logs[0:100]
-
-ylog("YARPE: Initialized from persistent bootstrap.")
-
-def yarpe_label_callback(label, abnormal):
-    ylog("LABEL: %s (abnormal=%r)" % (label, abnormal))
-
-    if label == "splashscreen" and not ys.game_initialized:
-        ys.game_initialized = True
-        ylog("YARPE: Entered _call__enter_game_menu_0 -> autoloading slot '1-1'.")
-
-        try:
-            renpy.load("1-1")
-        except Exception as e:
-            ylog("YARPE ERROR: renpy.load('1-1') failed: %r" % e)
-
-renpy.config.label_callback = yarpe_label_callback
-ylog("YARPE: label_callback replaced with yarpe_label_callback.")
+try:
+    execfile("/saves/yarpe_autoload/persistent_bootstrap.py")
+except Exception as exc:
+    try:
+        f = open("/saves/yarpe_persistent_error.txt", "w")
+        f.write(traceback.format_exc())
+        f.close()
+    except Exception:
+        pass
 """
 
 class YummyPersistent(object):

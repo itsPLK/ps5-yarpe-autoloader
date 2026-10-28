@@ -35,18 +35,35 @@ def main():
     fw_version = float(sc.version)
     log("[*] Console firmware version: %.2f" % fw_version)
 
-    needs_elf_loader = True
+    has_net = sc.get_current_ip() is not None
+    log("[*] Network interface active: %s" % has_net)
 
-    if fw_version <= 10.01:
-        log("Firmware <= 10.01, loading lapse.py...")
+    relapse_supported = (
+        fw_version >= 7.00
+        and fw_version <= 13.60
+        and sc.version != "9.05"
+    )
+
+    needs_elf_loader = False
+
+    if relapse_supported and has_net:
+        log("[*] Selected exploit: relapse.py ( network active )")
+        sc.send_notification(
+            "Selected exploit: relapse.py\n(network active: %s)" % has_net
+        )
+        run_script("/saves/yarpe_autoload/relapse.py")
+    elif fw_version <= 10.01:
+        log("[*] Selected exploit: lapse.py ( network not active )")
+        sc.send_notification(
+            "Selected exploit: lapse.py\n(network active: %s)" % has_net
+        )
         run_script("/saves/yarpe_autoload/lapse.py")
-        needs_elf_loader = True
-    elif fw_version <= 12.70:
-        log("Firmware <= 12.70, loading p2jb.py...")
-        run_script("/saves/yarpe_autoload/p2jb.py")
-        needs_elf_loader = False
     else:
         log("Unsupported firmware version for kexploit: " + sc.version)
+        sc.send_notification(
+            "Unsupported firmware version %s\n(network active: %s)"
+            % (sc.version, has_net)
+        )
         return
 
     if needs_elf_loader:

@@ -11,59 +11,25 @@ from constants import SYSCALL
 PERSISTENT_PATH = "/saves/persistent"
 DELAY_TIME = 10 # 10 Seconds
 
-SCRIPT = """
-import os
-import sys
-import traceback
-
-# Add YARPE folder to Python path
-sys.path.insert(0, "/saves/yarpe")
-
-class YarpeState(object):
-    def __init__(self):
-        self.logs = []
-        self.game_initialized = False
-
-renpy.store.yarpe_state = YarpeState()
-ys = renpy.store.yarpe_state
-
-# ---------------------------------------------------------
-# Logging
-# ---------------------------------------------------------
-
-def ylog(msg):
-    ys.logs.append(msg)
-    if len(ys.logs) > 400:
-        del ys.logs[0:100]
-
-ylog("YARPE: Initialized from persistent bootstrap.")
-
-# ---------------------------------------------------------
-# Label Callback Logic
-# ---------------------------------------------------------
-
-def yarpe_label_callback(label, abnormal):
-    ylog("LABEL: %s (abnormal=%r)" % (label, abnormal))
-
-    if label == "splashscreen" and not ys.game_initialized:
-        ys.game_initialized = True
-        ylog("YARPE: Entered _call__enter_game_menu_0 → autoloading slot '1-1'.")
-
-        try:
-            renpy.load("1-1")
-        except Exception as e:
-            ylog("YARPE ERROR: renpy.load('1-1') failed: %r" % e)
-
-# Install callback
-renpy.config.label_callback = yarpe_label_callback
-ylog("YARPE: label_callback replaced with yarpe_label_callback.")
-
-"""
-
+SCRIPT = 'execfile("/saves/yarpe_autoload/persistent_bootstrap.py")'
 
 class Yummy(object):
     def __reduce__(self):
         return renpy.python.py_exec, (SCRIPT,)
+
+    def __deepcopy__(self, memo):
+        new = Yummy()
+        memo[id(self)] = new
+        return new
+
+    def __eq__(self, other):
+        return isinstance(other, Yummy)
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __hash__(self):
+        return hash(SCRIPT)
 
 SYSCALL["getpid"] = 20
 SYSCALL["kill"] = 37
