@@ -1,4 +1,8 @@
+import struct
+
 __all__ = ["p64", "p64a", "p32", "p32a", "p16", "p16a", "unpack"]
+
+_UNPACK_FMT = {1: "<B", 2: "<H", 4: "<I", 8: "<Q"}
 
 
 def p64(n):
@@ -26,4 +30,7 @@ def p16a(*n):
 
 
 def unpack(buf):
+    fmt = _UNPACK_FMT.get(len(buf))
+    if fmt is not None:
+        return struct.unpack(fmt, buf)[0]
     return sum(buf[i] << (i * 8) for i in range(len(buf)))

