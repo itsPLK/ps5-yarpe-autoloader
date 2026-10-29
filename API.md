@@ -1,0 +1,159 @@
+# Python API
+
+- `utils`: Various utility modules
+    - `utils.ref`: Functions to get references to bytes/bytearray objects.
+        - `utils.ref.refbytes(data)`: Returns a pointer to the content of bytes object `data` that can then be passed to functions.
+        - `utils.ref.refbytearray(data)`: Returns a pointer to the content of bytearray object `data` that can then be passed to functions.
+        - `utils.ref.get_ref_addr(data)`: Returns the address of the content of bytes/bytearray/str/Structure object `data`.
+    - `utils.pack`: Functions to pack/unpack data.
+        - `utils.pack.p64(value_list)`: Packs `value_list` as 8-byte little-endian bytes.
+        - `utils.pack.p64a(*value)`: Packs `value` as 8-byte little-endian bytes.
+        - `utils.pack.p32(value_list)`: Packs `value_list` as 4-byte little-endian bytes.
+        - `utils.pack.p32a(*value)`: Packs `value` as 4-byte little-endian bytes.
+        - `utils.pack.p16(value_list)`: Packs `value_list` as 2-byte little-endian bytes.
+        - `utils.pack.p16a(*value)`: Packs `value` as 2-byte little-endian bytes.
+        - `utils.pack.unpack(data)`: Unpacks 8-byte little-endian bytes `data` to integer.
+    - `utils.conversion`: Functions to convert between different data types.
+        - `utils.conversion.u64(value)`: Converts `value` to unsigned 64-bit integer.
+        - `utils.conversion.u64_to_i64(value)`: Converts unsigned 64-bit integer `value` to signed 64-bit integer.
+        - `utils.conversion.u32_to_i32(value)`: Converts unsigned 32-bit integer `value` to signed 32-bit integer.
+        - `utils.conversion.get_cstring(data)`: Gets the C-style null-terminated string from `data`.
+    - `utils.etc`: Miscellaneous utility functions.
+        - `utils.etc.sizeof(data)`: Returns the size of bytes/bytearray/Structure object `data`.
+        - `utils.etc.flat(list_of_data)`: Flattens a list of objects into a single list.
+        - `utils.etc.addrof(data)`: Returns the address of the object `data`.
+        - `utils.etc.to_hex(data)`: Converts `data` to a hex string.
+        - `utils.etc.alloc(size)`: Allocates `size` bytes in the game's memory and returns the bytearray.
+        - `utils.etc.bytes(arr)`: Converts a list of integers `arr` to bytes object.
+    - `utils.unsafe`: Unsafe memory access functions.
+        - `utils.unsafe.readbuf(addr, length)`: Reads `length` bytes from `addr`.
+        - `utils.unsafe.writebuf(addr, data)`: Writes `data` to `addr`.
+        - `utils.unsafe.readuint(addr, size)`: Reads an unsigned integer of `size` bytes from `addr`.
+        - `utils.unsafe.writeuint(addr, value, size)`: Writes unsigned integer `value` of `size` bytes to `addr`.
+        - `utils.unsafe.fakeobj(addr)`: Returns a fake python object at `addr`.
+    - `utils.rp`: Logging to screen using Ren'Py functions.
+        - `utils.rp.log(*args)`: Logs `args` to screen.
+        - `utils.rp.log_exc(string)`: Logs the `string` as an exception to screen.
+    - `utils.tcp`: TCP socket functions.
+        - `utils.tcp.ip_to_int(ip_string)`: Converts `ip_string` to integer.
+        - `utils.tcp.htonl(value)`: Converts `value` to network byte order.
+        - `utils.tcp.create_tcp_socket()`: Creates a TCP socket and returns its file descriptor.
+        - `utils.tcp.get_socket_name(socket_fd)`: Gets the socket ip and port of `socket_fd`.
+        - `utils.tcp.create_tcp_server(port, ip='0.0.0.0')`: Creates a TCP server listening on `ip:port` and returns its file descriptor and sockaddr_in struct.
+        - `utils.tcp.create_tcp_client(ip, port)`: Creates a TCP client connected to `ip:port` and returns its file descriptor.
+        - `utils.tcp.accept_client(socket_fd)`: Accepts a client connection on `socket_fd` and returns the client socket fd and sockaddr_in struct.
+        - `utils.tcp.read_from_socket(socket_fd, size=4096)`: Reads up to `size` bytes from `socket_fd` and returns the data.
+        - `utils.tcp.read_all_from_socket(socket_fd)`: Reads all available data from `socket_fd` until no more data is available and returns the data.
+        - `utils.tcp.write_to_socket(socket_fd, data)`: Writes `data` to `socket_fd`.
+        - `utils.tcp.close_socket(socket_fd)`: Closes the socket `socket_fd`.
+    - `utils.fs`: File system functions.
+        - `utils.fs.stat_file(path)`: Gets the [stat struct](https://github.com/freebsd/freebsd-src/blob/b0973980cd24ba188c83fbba2410ddb8ed6546e2/sys/sys/stat.h#L122) of the file at `path`.
+        - `utils.fs.file_exists(path)`: Returns whether the file at `path` exists.
+        - `utils.fs.read_file_data(path)`: Reads the file at `path` and returns its data.
+        - `utils.fs.write_file_data(path, data)`: Writes `data` to the file at `path`.
+- `sc.sc`: SploitCore instance
+    - I will shorten `sc.sc` to `sc` for easier reading.
+    - `sc.mem`: bytearray representing the game's memory.
+    - `sc.functions`: Known functions that you can access like `sc.functions.function_name(arg1, arg2, ...)`.
+    Arguments will be automatically converted to integers using `get_ref_addr()`.
+    - `sc.syscalls`: Known syscalls that you can access like `sc.syscalls.syscall_name(arg1, arg2, ...)`.
+    Arguments will be automatically converted to integers using `get_ref_addr()`.
+    - `sc.errno`: Last error number.
+    - `sc.exec_addr`: Base address of the game's executable in memory.
+    - `sc.libc_addr`: Base address of libc in the game's memory.
+    - `sc.libkernel_addr`: Base address of libkernel in the game's memory.
+    - `sc.platform`: The console platform(does not depend on game edition) (e.g., 'ps4', 'ps5').
+        - Do note that these are in lowercase.
+    - `sc.version`: The console firmware version (e.g., '9.00', '10.03').
+    - `sc.is_jailbroken`: Returns whether the console is jailbroken.
+    - `sc.make_function_if_needed(name, addr)`: Creates a function entry in `sc.functions` if it does not already exist, and returns it.
+    - `sc.make_syscall_if_needed(name, num)`: Creates a syscall entry in `sc.syscalls` if it does not already exist, and returns it.
+    - `sc.send_notification(message)`: Sends a notification to the PS4/PS5.
+    - `sc.get_sysctl_int(name)`: Gets the integer value of the sysctl variable `name`.
+    - `sc.set_sysctl_int(name, value)`: Sets the integer value of the sysctl variable `name` to `value`.
+    - `sc.kill_game()`: Kills the current game process.
+- `ropchain`: ROPChain module
+    - `ropchain.ROPChain(sc, size=variable_per_console)`: Creates a ROP chain builder.
+        - `chain.chain`: The bytearray representing the ROP chain.
+        - `chain.index`: Current index in the ROP chain.
+        - `chain.return_value`:
+            - If `push_get_return_value()` was used, this will contain the return value of the function call after execution.
+        - `chain.errno`:
+            - If `push_get_errno()` was used, this will contain the errno value after execution.
+        - `chain.addr`: The address of the ROP chain in memory.
+        - `chain.reset()`: Resets the ROP chain to empty.
+        - `chain.append(value)`: Appends the 8-byte `value` to the ROP chain.
+        - `chain.extend(buf)`: Extends the ROP chain with the bytes in `buf`.
+        - `chain.push_gadget(gadget_name)`: Appends the gadget with name `gadget_name` to the ROP chain.
+        - `chain.push_value(value)`: Same as `append(value)`.
+        - `chain.push_syscall(syscall_number, arg1, arg2, ...)`: Appends the syscall with number `syscall_number` and its arguments to the ROP chain.
+        Arguments will be automatically converted to integers using `get_ref_addr()`.
+        - `chain.push_call(addr, arg1, arg2, ...)`: Appends the function call to `addr` with its arguments to the ROP chain.
+        Arguments will be automatically converted to integers using `get_ref_addr()`.
+        - `chain.push_get_return_value()`: Appends the necessary gadgets to get the return value of the last function/syscall called.
+        - `chain.push_get_errno()`: Appends the necessary gadgets to get the errno value after the last function/syscall called.
+        - `chain.push_write_into_memory(addr, data)`: Appends the necessary gadgets to write `data` into memory at `addr`.
+        - `chain.push_store_rax_into_memory(addr)`: Appends the necessary gadgets to store the value in `RAX` into memory at `addr`.
+        - `chain.push_store_rdx_into_memory(addr)`: Appends the necessary gadgets to store the value in `RDX` into memory at `addr`.
+    - `ropchain.Executable(sc, size=variable_per_console)`: Creates an executable memory region.
+        - When you create an `Executable` instance, you need to create 4 ROP chains:
+            - Front chain
+            - Call/syscall chain
+            - Post chain
+            - Back chain
+        - `executable.chain`: The `ROPChain` instance representing the executable code.
+        - `executable.errno`: The errno value after execution.
+        - `executable.setup_front_chain()`: Sets up the front chain for execution.
+        - `executable.setup_call_chain(func_addr, arg1, arg2, ...)`: Sets up the call chain to call `func_addr` with its arguments.
+        Arguments will be automatically converted to integers using `get_ref_addr()`.
+        - `executable.setup_syscall_chain(syscall_number, arg1, arg2, ...)`: Sets up the syscall chain to call `syscall_number` with its arguments.
+        Arguments will be automatically converted to integers using `get_ref_addr()`.
+        - `executable.setup_post_chain()`: Sets up the post chain for execution.
+        - `executable.setup_back_chain()`: Sets up the back chain for execution.
+        - `executable.execute()`: Executes the code in the executable memory region.
+- `structure`: Structure module
+    - `structure.Structure(structure_pair)`: Creates a structure definition from `structure_pair`.
+        - `structure_pair = [(field_name1, field_size1), (field_name2, field_size2), ...]`
+        - `struct.size`: Total size of the structure in bytes.
+        - `struct.offsets`: A dictionary mapping field names to their offsets in the structure.
+        - `struct.create(defaults=None)`: Creates an instance of the structure with optional defaults(`defaults[field] = value`).
+        - `struct.from_bytes(data)`: Creates an instance of the structure from the given bytes `data`.
+            - Do note that `data` will be copied into a new bytearray, so modifying the instance will not modify `data`.
+        - `struct.from_bytearray(data)`: Creates an instance of the structure from the given bytearray `data`.
+            - Do note that modifying the instance will modify `data` as well.
+        - `struct.from_address(addr)`: Creates an instance of the structure from the memory at `addr`.
+            - Do note that modifying the instance will modify the memory at `addr` as well.
+    - `structure.StructureInstance(structure, defaults=None)`: Creates an instance of `structure`.
+        - You can provide optional defaults(`defaults[field] = value`) to initialize fields.
+        - When you access fields as attributes(e.g., `instance.field_name`), it will get/set the matching field value automatically.
+        - `instance.structure`: The structure definition used to create this instance.
+        - `instance.buf`: The bytearray representing the structure's data.
+        - `instance.addr`: The address of the structure's data in memory.
+        - `instance.get_field(field_name)`: Gets the value of the field `field_name`.
+        - `instance.set_field(field_name, value)`: Sets the value of the field `field_name` to `value`.
+        - `instance.get_field_raw(field_name, size)`: Gets the raw bytes of the field `field_name` with length `size`.
+        - `instance.set_field_raw(field_name, data)`: Sets the raw bytes of the field `field_name` to `data`.
+        - `instance.reset()`: Resets all fields to zero.
+- `offsets`: Offsets list module
+    - `offsets.GADGET_OFFSETS`: A dictionary containing known gadget offsets that can be used in ROP chains.
+        - Example: `GADGET_OFFSETS[game_name][console_variation][gadget_name] = offset`
+    - `offsets.LIBC_GADGETS`: A list that marks which gadgets are from libc.
+        - For example, if you set `pop rax; ret` gadget as libc gadget, it will be resolved using `sc.libc_addr + offset` instead of `sc.exec_addr + offset`.
+    - `offsets.LIBC_OFFSETS`: A dictionary containing known libc function offsets that can be used to create function entries in `sc.functions`.
+        - Example: `LIBC_OFFSETS[game_name][console_variation][function_name] = offset`
+    - `offsets.EXEC_OFFSETS`: A dictionary containing known executable function offsets that can be used to create function entries in `sc.functions`.
+        - Example: `EXEC_OFFSETS[game_name][console_variation][function_name] = offset`
+- `constants`: Constants module
+    - `VERSION`: The version of yarpe.
+        - If you built yarpe from source, this will be "custom build".
+    - `CONSOLE_KIND`: Current game console edition(e.g., 'PS4', 'PS5') (does not depend on the console model itself).
+        - Do note that these are in uppercase.
+    - `SELECTED_GADGETS`: The gadget set selected for the current game and console.
+    - `SELECTED_LIBC`: The libc offsets selected for the current game and console.
+    - `SELECTED_EXEC`: The executable offsets selected for the current game and console.
+    - `SYSCALL`: A dictionary containing known syscall numbers that can be used to create syscall entries in `sc.syscalls`.
+        - Example: `SYSCALL[syscall_name] = number`
+    - `nogc`: A list that holds references to objects that should not be garbage collected.
+    - `rp`: `renpy` variable that can be used to access Ren'Py functions.
+    - `SHARED_VARS`: A dictionary that can be used to share data between multiple payloads.
+

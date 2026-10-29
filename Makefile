@@ -47,7 +47,7 @@ $(ZIP_FILE): stage $(SRC_FILES)
 	mkdir -p build_dir/$(ZIP_DIR_NAME)
 	cp save.zip build_dir/$(ZIP_DIR_NAME)/
 	mv 1-1-LT1_unzipper.save build_dir/$(ZIP_DIR_NAME)/1-1-LT1.save
-	cp README.md build_dir/$(ZIP_DIR_NAME)/
+	cp README.md SETUP.md UPDATE.md DONATE.md LICENSE build_dir/$(ZIP_DIR_NAME)/
 	(cd build_dir && zip -r ../$(ZIP_FILE) $(ZIP_DIR_NAME))
 	rm -rf build_dir
 	echo "Created $(ZIP_FILE)"

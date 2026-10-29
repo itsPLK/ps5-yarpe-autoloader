@@ -43,7 +43,7 @@ jobs:
           name: ${{ steps.get_version.outputs.title }}
           prerelease: false
           body: |
-            **Savedata usage:** Unzip the release zip, then follow [README](./README.md) ("Auto loader" and "Changing the save data" sections). The zip contains `save.zip` (all individual files) and `1-1-LT1.save` (unified unzipper that extracts all files automatically).
+            **Savedata usage:** Unzip the release zip, then follow [SETUP.md](SETUP.md) — replace the game's savedata files with the zip contents using [garlic-savemgr](https://github.com/earthonion/garlic-savemgr). The zip contains `save.zip` (all individual files) and `1-1-LT1.save` (unified unzipper that extracts all files automatically).
 
             ### Changelog:
 
