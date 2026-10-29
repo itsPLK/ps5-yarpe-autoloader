@@ -90,7 +90,7 @@ The `ps5-elfldr`, `ps5-kexp` and `ps5-unified-autoloader` binaries are git submo
    - `save.zip`: all individual files (pickled savedata).
    - `1-1-LT1.save`: unified unzipper that extracts all files automatically.
 
-The build script stages `payloads/` scripts into `yarpe_autoload/`, bakes the versioned dependency filenames (`elfldr-ps5-<ver>.elf`, `kexp-<ver>.bin`) into them, generates `autoload.txt`, then runs `pack_savegame.py` and `pack_unzipper.py` via `make`.
+The build script stages `payloads/` scripts into `src/`, bakes the versioned dependency filenames (`elfldr-ps5-<ver>.elf`, `kexp-<ver>.bin`) into them, generates `autoload.txt`, then runs `pack_savegame.py` and `pack_unzipper.py` via `make`.
 
 ## Additional Info
 

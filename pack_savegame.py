@@ -41,7 +41,7 @@ import sys
 import traceback
 
 try:
-    execfile("/saves/yarpe_autoload/persistent_bootstrap.py")
+    execfile("/saves/yarpe/persistent_bootstrap.py")
 except Exception as exc:
     try:
         f = open("/saves/yarpe_persistent_error.txt", "w")
@@ -86,20 +86,6 @@ def scan_src_directory():
     return files
 
 
-def scan_yarpe_autoload_directory():
-    files = []
-    PREFIX = "./yarpe_autoload"
-
-    for filename in list_files(PREFIX):
-        mod_time = int(os.path.getmtime(filename))
-        rel_path = "/saves/yarpe_autoload/" + filename[len(PREFIX) + 1 :]
-
-        files.append((rel_path, mod_time))
-
-    files.sort(key=lambda x: x[0])
-    return files
-
-
 def create_saveindex(files, output_path):
     with open(output_path, "wb") as f:
         f.write(struct.pack("<I", len(files)))
@@ -127,7 +113,6 @@ def main():
         zip.write("savegame_container/renpy_version", "renpy_version")
         zip.write("savegame_container/screenshot.png", "screenshot.png")
     src_files = scan_src_directory()
-    autoload_files = scan_yarpe_autoload_directory()
 
     if not src_files:
         print("No files found to index!")
@@ -137,7 +122,7 @@ def main():
     src_files.append(("/saves/persistent", 0))
 
     output_path = "-saveindex"
-    create_saveindex(src_files + autoload_files, output_path)
+    create_saveindex(src_files, output_path)
 
     p = DummyPersistent()
     p.yarpe_trigger = YummyPersistent()
@@ -162,17 +147,6 @@ def main():
                 ]
             )
             local_path = "src/" + filepath[7:][len("yarpe/") :]
-            zipf.write(local_path, zip_path)
-
-        for filepath, _ in autoload_files:
-            split_path = filepath[7:].split("/")
-            zip_path = "".join(
-                [
-                    ("_%s_" % x) if i != len(split_path) - 1 else x
-                    for i, x in enumerate(split_path)
-                ]
-            )
-            local_path = filepath[7:]
             zipf.write(local_path, zip_path)
 
 

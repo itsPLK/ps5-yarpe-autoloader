@@ -14,10 +14,10 @@ endif
 ZIP_DIR_NAME := ps5-yarpe-autoloader-$(RELEASE_VERSION)
 ZIP_FILE     := $(ZIP_DIR_NAME).zip
 
-SRC_FILES := $(shell find payloads yarpe_autoload src savegame_container -type f)
+SRC_FILES := $(shell find payloads src savegame_container -type f)
 ELFLDR_FILE := $(shell basename $(shell ls src/elfldr-ps5-*.elf 2>/dev/null | head -n 1) 2>/dev/null)
 KEXP_FILE := $(shell basename $(shell ls src/kexp-*.bin 2>/dev/null | head -n 1) 2>/dev/null)
-UNIFIED_AUTOLOADER_FILE := $(shell basename $(shell ls yarpe_autoload/ps5-unified-autoloader*.elf 2>/dev/null | head -n 1) 2>/dev/null)
+UNIFIED_AUTOLOADER_FILE := $(shell basename $(shell ls src/ps5-unified-autoloader*.elf 2>/dev/null | head -n 1) 2>/dev/null)
 
 # Version string baked into the save at build time
 YARPE_VERSION = $(RELEASE_VERSION)
@@ -25,20 +25,20 @@ export YARPE_VERSION
 
 all: $(ZIP_FILE)
 
-# Stage the master payload scripts into yarpe_autoload/ and bake in
+# Stage the master payload scripts into src/ and bake in
 # the dependency filenames (the staged copies are gitignored)
-stage: payloads/elf_loader.py payloads/lapse.py payloads/kexp.py payloads/kexp_dispatch.py payloads/relapse.py payloads/relapse_offsets.py
-	cp -f payloads/elf_loader.py payloads/lapse.py payloads/kexp.py payloads/kexp_dispatch.py payloads/relapse.py payloads/relapse_offsets.py yarpe_autoload/
-	echo "$(RELEASE_VERSION)" > yarpe_autoload/version.txt
+stage: payloads/elf_loader.py payloads/lapse.py payloads/kexp.py payloads/kexp_dispatch.py payloads/relapse.py payloads/relapse_offsets.py payloads/persistent_bootstrap.py
+	cp -f payloads/elf_loader.py payloads/lapse.py payloads/kexp.py payloads/kexp_dispatch.py payloads/relapse.py payloads/relapse_offsets.py payloads/persistent_bootstrap.py src/
+	echo "$(RELEASE_VERSION)" > src/version.txt
 	# Replace elfldr filename in elf_loader.py, kexp.py, relapse.py
-	sed -i.bak "s/@@ELFLDR_FILE@@/$(ELFLDR_FILE)/g" yarpe_autoload/elf_loader.py && rm yarpe_autoload/elf_loader.py.bak
-	sed -i.bak "s/@@ELFLDR_FILE@@/$(ELFLDR_FILE)/g" yarpe_autoload/kexp.py && rm yarpe_autoload/kexp.py.bak
-	sed -i.bak "s/@@ELFLDR_FILE@@/$(ELFLDR_FILE)/g" yarpe_autoload/relapse.py && rm yarpe_autoload/relapse.py.bak
+	sed -i.bak "s/@@ELFLDR_FILE@@/$(ELFLDR_FILE)/g" src/elf_loader.py && rm src/elf_loader.py.bak
+	sed -i.bak "s/@@ELFLDR_FILE@@/$(ELFLDR_FILE)/g" src/kexp.py && rm src/kexp.py.bak
+	sed -i.bak "s/@@ELFLDR_FILE@@/$(ELFLDR_FILE)/g" src/relapse.py && rm src/relapse.py.bak
 	# Replace kexp filename in kexp.py, relapse.py
-	sed -i.bak "s/@@KEXP_FILE@@/$(KEXP_FILE)/g" yarpe_autoload/kexp.py && rm yarpe_autoload/kexp.py.bak
-	sed -i.bak "s/@@KEXP_FILE@@/$(KEXP_FILE)/g" yarpe_autoload/relapse.py && rm yarpe_autoload/relapse.py.bak
+	sed -i.bak "s/@@KEXP_FILE@@/$(KEXP_FILE)/g" src/kexp.py && rm src/kexp.py.bak
+	sed -i.bak "s/@@KEXP_FILE@@/$(KEXP_FILE)/g" src/relapse.py && rm src/relapse.py.bak
 	# Replace unified autoloader filename in the autoload.txt template
-	sed "s/@@UNIFIED_AUTOLOADER_FILE@@/$(UNIFIED_AUTOLOADER_FILE)/g" yarpe_autoload/autoload.txt.in > yarpe_autoload/autoload.txt
+	sed "s/@@UNIFIED_AUTOLOADER_FILE@@/$(UNIFIED_AUTOLOADER_FILE)/g" payloads/autoload.txt.in > src/autoload.txt
 
 $(ZIP_FILE): stage $(SRC_FILES)
 	python3 pack_savegame.py
@@ -54,12 +54,12 @@ $(ZIP_FILE): stage $(SRC_FILES)
 
 clean:
 	rm -rf build_dir ps5-yarpe-autoloader-*.zip
+	rm -rf ps5-yarpe-autoloader-*/
 	rm -f save.zip 1-1-LT1.save 1-1-LT1_unzipper.save ./-saveindex persistent
-	rm -f yarpe_autoload/elf_loader.py yarpe_autoload/lapse.py yarpe_autoload/kexp.py yarpe_autoload/kexp_dispatch.py yarpe_autoload/relapse.py yarpe_autoload/relapse_offsets.py
-	rm -f yarpe_autoload/autoload.txt yarpe_autoload/version.txt
-	rm -f src/elfldr-ps5.elf src/elfldr-ps5-*.elf src/kexp-*.bin
-	rm -f yarpe_autoload/ps5-unified-autoloader*.elf yarpe_autoload/elfldr*.elf yarpe_autoload/kexp*.bin
-	rm -f src/version.txt
+	rm -f src/elf_loader.py src/lapse.py src/kexp.py src/kexp_dispatch.py src/relapse.py src/relapse_offsets.py src/persistent_bootstrap.py
+	rm -f src/autoload.txt src/version.txt
+	rm -f src/elfldr*.elf src/kexp*.bin
+	rm -f src/ps5-unified-autoloader*.elf
 
 .PHONY: all stage clean print-version
 print-version:

@@ -11,7 +11,7 @@ from constants import SYSCALL
 PERSISTENT_PATH = "/saves/persistent"
 DELAY_TIME = 10 # 10 Seconds
 
-SCRIPT = 'execfile("/saves/yarpe_autoload/persistent_bootstrap.py")'
+SCRIPT = 'execfile("/saves/yarpe/persistent_bootstrap.py")'
 
 class Yummy(object):
     def __reduce__(self):

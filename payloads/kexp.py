@@ -58,7 +58,7 @@ SYSCALL["dlsym"] = 0x24F
 
 
 def find_payload_file(configured_name, fallback_name):
-    payload_dirs = ["/saves/yarpe_autoload/", "/saves/yarpe/", "/savedata0/"]
+    payload_dirs = ["/saves/yarpe/", "/savedata0/"]
 
     for sdir in payload_dirs:
         if configured_name and "@@" not in configured_name:

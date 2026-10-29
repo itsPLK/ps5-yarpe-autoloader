@@ -10,7 +10,7 @@ import os
 import struct
 import sys
 
-_AUTOLOAD_DIR = "/saves/yarpe_autoload"
+_AUTOLOAD_DIR = "/saves/yarpe"
 if os.path.isdir(_AUTOLOAD_DIR) and _AUTOLOAD_DIR not in sys.path:
     sys.path.append(_AUTOLOAD_DIR)
 

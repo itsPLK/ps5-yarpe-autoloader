@@ -6,11 +6,9 @@ set -euo pipefail
 # Ensure we are in the project root
 cd "$(dirname "$0")/.."
 
-# elfldr and kexp live in src/ (shipped as /saves/yarpe/),
-# the unified autoloader lives in yarpe_autoload/ (next to autoload.txt)
-YARPE_DIR="src"
-AUTOLOAD_DIR="yarpe_autoload"
-mkdir -p "$YARPE_DIR" "$AUTOLOAD_DIR"
+# elfldr, kexp and the unified autoloader all ship as /saves/yarpe/ (src/)
+DEST_DIR="src"
+mkdir -p "$DEST_DIR"
 
 echo "Checking for curl..."
 if ! command -v curl &> /dev/null; then
@@ -83,26 +81,24 @@ if [ "${GITHUB_OUTPUT:-}" ]; then
 fi
 
 # Clean old dependency files
-echo "Cleaning old binaries from $YARPE_DIR and $AUTOLOAD_DIR..."
-rm -f "$YARPE_DIR"/elfldr-ps5-*.elf
-rm -f "$YARPE_DIR"/kexp-*.bin
-rm -f "$YARPE_DIR"/elfldr*.elf
-rm -f "$AUTOLOAD_DIR"/ps5-unified-autoloader*.elf
-rm -f "$AUTOLOAD_DIR"/elfldr*.elf "$AUTOLOAD_DIR"/kexp*.bin
+echo "Cleaning old binaries from $DEST_DIR..."
+rm -f "$DEST_DIR"/elfldr*.elf
+rm -f "$DEST_DIR"/kexp*.bin
+rm -f "$DEST_DIR"/ps5-unified-autoloader*.elf
 
 ELFLDR_FILE="elfldr-ps5-${ELFLDR_VER}.elf"
 KEXP_FILE="kexp-${KEXP_VER}.bin"
 AUTOLOADER_FILE="ps5-unified-autoloader.elf"
 
 # Download assets
-echo "Downloading $ELFLDR_URL to $YARPE_DIR/$ELFLDR_FILE..."
-curl -L -o "$YARPE_DIR/$ELFLDR_FILE" "$ELFLDR_URL"
+echo "Downloading $ELFLDR_URL to $DEST_DIR/$ELFLDR_FILE..."
+curl -L -o "$DEST_DIR/$ELFLDR_FILE" "$ELFLDR_URL"
 
-echo "Downloading $KEXP_URL to $YARPE_DIR/$KEXP_FILE..."
-curl -L -o "$YARPE_DIR/$KEXP_FILE" "$KEXP_URL"
+echo "Downloading $KEXP_URL to $DEST_DIR/$KEXP_FILE..."
+curl -L -o "$DEST_DIR/$KEXP_FILE" "$KEXP_URL"
 
-echo "Downloading $AUTOLOADER_URL to $AUTOLOAD_DIR/$AUTOLOADER_FILE..."
-curl -L -o "$AUTOLOAD_DIR/$AUTOLOADER_FILE" "$AUTOLOADER_URL"
+echo "Downloading $AUTOLOADER_URL to $DEST_DIR/$AUTOLOADER_FILE..."
+curl -L -o "$DEST_DIR/$AUTOLOADER_FILE" "$AUTOLOADER_URL"
 
 echo "Successfully downloaded all dependencies!"
 echo "Dependency versions:"

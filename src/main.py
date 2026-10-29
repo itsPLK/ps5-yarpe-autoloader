@@ -37,7 +37,7 @@ def poc():
     for i in range(8):
         AUTO_LOAD_PATHS.append("/mnt/usb%d/yarpe_autoload/autoload.txt" % i)
     AUTO_LOAD_PATHS.append("/data/yarpe_autoload/autoload.txt")
-    AUTO_LOAD_PATHS.append("/saves/yarpe_autoload/autoload.txt")
+    AUTO_LOAD_PATHS.append("/saves/yarpe/autoload.txt")
 
     auto_load_path = None
     run_auto_load = True

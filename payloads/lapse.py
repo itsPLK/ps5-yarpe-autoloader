@@ -27,7 +27,7 @@ from ropchain import ROPChain, Executable
 from constants import SYSCALL, SELECTED_LIBC, nogc, SELECTED_GADGETS, SHARED_VARS
 from offsets import LIBC_OFFSETS
 
-_AUTOLOAD_DIR = "/saves/yarpe_autoload"
+_AUTOLOAD_DIR = "/saves/yarpe"
 if os.path.isdir(_AUTOLOAD_DIR) and _AUTOLOAD_DIR not in sys.path:
     sys.path.append(_AUTOLOAD_DIR)
 

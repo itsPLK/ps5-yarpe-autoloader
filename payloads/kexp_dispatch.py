@@ -23,7 +23,7 @@ def main():
         log("This autoloader dispatch is intended for PS5.")
         return
 
-    version_path = "/saves/yarpe_autoload/version.txt"
+    version_path = "/saves/yarpe/version.txt"
     if file_exists(version_path):
         version = read_file_data(version_path).decode("utf-8").strip()
     else:
@@ -51,13 +51,13 @@ def main():
         sc.send_notification(
             "Selected exploit: relapse.py\n(network active: %s)" % has_net
         )
-        run_script("/saves/yarpe_autoload/relapse.py")
+        run_script("/saves/yarpe/relapse.py")
     elif fw_version <= 10.01:
         log("[*] Selected exploit: lapse.py ( network not active )")
         sc.send_notification(
             "Selected exploit: lapse.py\n(network active: %s)" % has_net
         )
-        run_script("/saves/yarpe_autoload/lapse.py")
+        run_script("/saves/yarpe/lapse.py")
     else:
         log("Unsupported firmware version for kexploit: " + sc.version)
         sc.send_notification(
@@ -68,7 +68,7 @@ def main():
 
     if needs_elf_loader:
         log("[*] Current exploit requires elf_loader.py, loading...")
-        run_script("/saves/yarpe_autoload/elf_loader.py")
+        run_script("/saves/yarpe/elf_loader.py")
     else:
         log("[*] Skipping elf_loader.py for this firmware...")
 

@@ -19,7 +19,6 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 YARPE_DIR="src"
-AUTOLOAD_DIR="yarpe_autoload"
 
 # Helper to build dependencies from source
 build_source_deps() {
@@ -31,10 +30,9 @@ build_source_deps() {
     fi
 
     # Clean old binaries
-    rm -f "$YARPE_DIR"/elfldr-ps5-*.elf
-    rm -f "$YARPE_DIR"/kexp-*.bin
-    rm -f "$AUTOLOAD_DIR"/ps5-unified-autoloader*.elf
-    rm -f "$AUTOLOAD_DIR"/elfldr*.elf "$AUTOLOAD_DIR"/kexp*.bin
+    rm -f "$YARPE_DIR"/elfldr*.elf
+    rm -f "$YARPE_DIR"/kexp*.bin
+    rm -f "$YARPE_DIR"/ps5-unified-autoloader*.elf
 
     echo "Building ps5-elfldr..."
     (cd third_party/ps5-elfldr && ./build.sh)
@@ -54,7 +52,7 @@ build_source_deps() {
         echo "Error: ps5-unified-autoloader build succeeded but no output ELF found." >&2
         exit 1
     fi
-    cp "$AUTOLOADER_ELF" "$AUTOLOAD_DIR/ps5-unified-autoloader.elf"
+    cp "$AUTOLOADER_ELF" "$YARPE_DIR/ps5-unified-autoloader.elf"
 
     if [ "${GITHUB_OUTPUT:-}" ]; then
         echo "elfldr_ver=${ELFLDR_VER}" >> "$GITHUB_OUTPUT"
@@ -80,7 +78,7 @@ else
     # Auto mode: check if binaries exist
     HAS_KEXP=$(ls "$YARPE_DIR"/kexp-*.bin 2>/dev/null | head -n 1)
     HAS_ELFLDR=$(ls "$YARPE_DIR"/elfldr-ps5-*.elf 2>/dev/null | head -n 1)
-    HAS_AUTOLOADER=$(ls "$AUTOLOAD_DIR"/ps5-unified-autoloader.elf 2>/dev/null | head -n 1)
+    HAS_AUTOLOADER=$(ls "$YARPE_DIR"/ps5-unified-autoloader.elf 2>/dev/null | head -n 1)
 
     if [ -n "$HAS_KEXP" ] && [ -n "$HAS_ELFLDR" ] && [ -n "$HAS_AUTOLOADER" ]; then
         echo "Dependencies already present."

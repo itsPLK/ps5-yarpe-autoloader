@@ -2,7 +2,7 @@ import sys
 
 sys.path.insert(0, "/saves/yarpe")
 
-TRIGGER = 'execfile("/saves/yarpe_autoload/persistent_bootstrap.py")'
+TRIGGER = 'execfile("/saves/yarpe/persistent_bootstrap.py")'
 
 
 class YarpeState(object):
