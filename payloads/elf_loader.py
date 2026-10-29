@@ -428,16 +428,16 @@ def main():
 
     payload_data = b""
 
-    if os.path.exists("/saves/yarpe/elfldr-ps5.elf") and not FORCE_SOCKET:
-        log("Found elfldr-ps5.elf in /saves/yarpe/. Loading from save...")
+    if os.path.exists("/saves/yarpe/@@ELFLDR_FILE@@") and not FORCE_SOCKET:
+        log("Found @@ELFLDR_FILE@@ in /saves/yarpe/. Loading from save...")
         log(
             "You can force network transfer by holding X button when launching the payload."
         )
-        with open("/saves/yarpe/elfldr-ps5.elf", "rb") as f:
+        with open("/saves/yarpe/@@ELFLDR_FILE@@", "rb") as f:
             payload_data = f.read()
     else:
         log(
-            "elfldr-ps5.elf not found in /saves/yarpe/ or X button pressed... Will wait for network transfer."
+            "@@ELFLDR_FILE@@ not found in /saves/yarpe/ or X button pressed... Will wait for network transfer."
         )
 
         s, _ = create_tcp_server(PORT)

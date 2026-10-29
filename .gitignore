@@ -18,3 +18,11 @@ save.zip
 persistent
 /test.py
 .for_reference
+ps5-yarpe-autoloader-*.zip
+build_dir/
+src/elfldr-ps5-*.elf
+src/kexp-*.bin
+yarpe_autoload/ps5-unified-autoloader*.elf
+yarpe_autoload/*.py
+yarpe_autoload/autoload.txt
+yarpe_autoload/version.txt
